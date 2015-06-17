@@ -12,6 +12,7 @@
      C     O   gb_5
      C    +N   gb_19
  [ angles ]
+   CA     C     O    ga_30   
    CA     C    +N    ga_19
     O     C    +N    ga_33
  [ impropers ]
@@ -36,7 +37,7 @@
     -CA -C N H1 gd_14
  [ impropers ]
     -C -O N -CA gi_1
-     N  H H  -C gi_1
+     N H1 H2 -C gi_1
 
 [ ALA ]
  [ atoms ]

@@ -230,7 +230,7 @@ void mdrunner(FILE *fplog,t_commrec *cr,int nfile,t_filenm fnm[],
       }
   }
   
-  if (MASTER(cr) && (Flags & MD_APPENDFILES))
+  if ((MASTER(cr) || (Flags & MD_SEPPOT)) && (Flags & MD_APPENDFILES))
   {
       fplog = gmx_log_open(ftp2fn(efLOG,nfile,fnm),cr, !(Flags & MD_SEPPOT) ,Flags);
   }
@@ -742,7 +742,7 @@ time_t do_md(FILE *fplog,t_commrec *cr,int nfile,t_filenm fnm[],
   if (!ir->bContinuation && !bRerunMD) {
     if (mdatoms->cFREEZE && (state->flags & (1<<estV))) {
       /* Set the velocities of frozen particles to zero */
-      for(i=mdatoms->start; i<mdatoms->homenr; i++) {
+      for(i=mdatoms->start; i<mdatoms->start+mdatoms->homenr; i++) {
 	for(m=0; m<DIM; m++) {
 	  if (ir->opts.nFreeze[mdatoms->cFREEZE[i]][m]) {
 	    state->v[i][m] = 0;

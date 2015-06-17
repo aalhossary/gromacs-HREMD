@@ -59,6 +59,8 @@
 #include "gmxcpp.h"
 #include "checkpoint.h"
 #include "mtop_util.h"
+#include "sparsematrix.h"
+#include "mtxio.h"
 
 static void dump_top(FILE *fp,t_topology *top,char *tpr)
 {
@@ -362,23 +364,62 @@ void list_ene(char *fn)
   sfree(enm);
 }
 
+static void list_mtx(char *fn)
+{
+  int  nrow,ncol,i,j,k;
+  real *full=NULL,value;
+  gmx_sparsematrix_t * sparse=NULL;
+
+  gmx_mtxio_read(fn,&nrow,&ncol,&full,&sparse);
+
+  if (full == NULL) {
+    snew(full,nrow*ncol);
+    for(i=0;i<nrow*ncol;i++) {
+      full[i] = 0;
+    }
+    
+    for(i=0;i<sparse->nrow;i++) {
+	for(j=0;j<sparse->ndata[i];j++) {
+	  k     = sparse->data[i][j].col;
+	  value = sparse->data[i][j].value;
+	  full[i*ncol+k] = value;
+	  full[k*ncol+i] = value;
+	}
+    }
+    gmx_sparsematrix_destroy(sparse);
+  }
+
+  printf("%d %d\n",nrow,ncol);
+  for(i=0; i<nrow; i++) {
+    for(j=0; j<ncol; j++) {
+      printf(" %g",full[i*ncol+j]);
+    }
+    printf("\n");
+  }
+
+  sfree(full);
+}
+
 int main(int argc,char *argv[])
 {
   static char *desc[] = {
     "gmxdump reads a run input file ([TT].tpa[tt]/[TT].tpr[tt]/[TT].tpb[tt]),",
-    "a trajectory ([TT].trj[tt]/[TT].trr[tt]/[TT].xtc[tt]) or an energy",
-    "file ([TT].ene[tt]/[TT].edr[tt]) and prints that to standard",
-    "output in a readable format. This program is essential for",
-    "checking your run input file in case of problems.[PAR]",
-    "When requesting to dump a topology file the program will dump",
-    "the processed topology, since not all original information is maintained",
-    "in tpr files."
+    "a trajectory ([TT].trj[tt]/[TT].trr[tt]/[TT].xtc[tt]), an energy",
+    "file ([TT].ene[tt]/[TT].edr[tt]), or a checkpoint file ([TT].cpt[tt])",
+    "and prints that to standard output in a readable format.",
+    "This program is essential for checking your run input file in case of",
+    "problems.[PAR]",
+    "The program can also preprocess a topology to help finding problems.",
+    "Note that currently setting GMXLIB is the only way to customize",
+    "directories used for searching include files.",
   };
   t_filenm fnm[] = {
     { efTPX, "-s", NULL, ffOPTRD },
     { efTRX, "-f", NULL, ffOPTRD },
     { efENX, "-e", NULL, ffOPTRD },
     { efCPT, NULL, NULL, ffOPTRD },
+    { efTOP, "-p", NULL, ffOPTRD },
+    { efMTX, "-mtx", "hessian", ffOPTRD }, 
     { efMDP, "-om", NULL, ffOPTWR }
   };
 #define NFILE asize(fnm)
@@ -407,6 +448,10 @@ int main(int argc,char *argv[])
     list_ene(ftp2fn(efENX,NFILE,fnm));
   else if (ftp2bSet(efCPT,NFILE,fnm))
     list_checkpoint(ftp2fn(efCPT,NFILE,fnm),stdout);
+  else if (ftp2bSet(efTOP,NFILE,fnm))
+    list_top(ftp2fn(efTOP,NFILE,fnm));
+  else if (ftp2bSet(efMTX,NFILE,fnm))
+    list_mtx(ftp2fn(efMTX,NFILE,fnm));
     
   thanx(stderr);
 

@@ -51,7 +51,7 @@
 #include "tgroup.h"
 
 #define   block_bc(cr,   d) gmx_bcast(     sizeof(d),     &(d),(cr))
-#define  nblock_bc(cr,nr,d) gmx_bcast((nr)*sizeof((d)[0]), (d),(cr))
+#define  nblock_bc(cr,nr,d) { if ((nr) > 0) gmx_bcast((nr)*sizeof((d)[0]), (d),(cr)); }
 #define    snew_bc(cr,d,nr) { if (!MASTER(cr)) snew((d),(nr)); }
 /* Dirty macro with bAlloc not as an argument */
 #define nblock_abc(cr,nr,d) { if (bAlloc) snew((d),(nr)); nblock_bc(cr,(nr),(d)); }
@@ -379,7 +379,7 @@ static void bc_pullgrp(const t_commrec *cr,t_pullgrp *pgrp)
     nblock_bc(cr,pgrp->nat,pgrp->ind);
   }
   if (pgrp->nweight > 0) {
-    snew_bc(cr,pgrp->ind,pgrp->nweight);
+    snew_bc(cr,pgrp->weight,pgrp->nweight);
     nblock_bc(cr,pgrp->nweight,pgrp->weight);
   }
 }

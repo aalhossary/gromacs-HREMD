@@ -53,6 +53,7 @@
 #include "orires.h"
 #include "constr.h"
 #include "mtop_util.h"
+#include "gmxfio.h"
 
 static bool bEInd[egNR] = { TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE };
 
@@ -559,8 +560,10 @@ void print_ebin(int fp_ene,bool bEne,bool bDR,bool bOR,
 	fr.nblock = i+1;
     fr.nr         = nr;
     fr.block      = block;
-    if (fr.nre || fr.ndisre || fr.nr[enxOR] || fr.nr[enxORI])
+    if (fr.nre || fr.ndisre || fr.nr[enxOR] || fr.nr[enxORI]) {
       do_enx(fp_ene,&fr);
+      gmx_fio_check_file_position(fp_ene);
+    }
     break;
   case eprAVER:
     if (log) pprint(log,"A V E R A G E S");
