@@ -554,7 +554,7 @@ static void write_debug_x(t_state *state)
 bool replica_exchange(FILE *fplog,const t_commrec *cr,struct gmx_repl_ex *re,
 		      t_state *state,real *ener,
 		      t_state *state_local,
-		      int step,real time)
+		      int step,real time)/*watch this line*/
 {
   gmx_multisim_t *ms;
   int  exchange=-1,shift;

@@ -657,7 +657,7 @@ int opt2fns(char **fns[], char *opt,int nfile,t_filenm fnm[])
   return 0;
 }
 
-char *ftp2fn(int ftp,int nfile,t_filenm fnm[])
+char *ftp2fn(int ftp,int nfile,t_filenm fnm[]) /*watch this line*/
 {
   int i;
   

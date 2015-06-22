@@ -218,7 +218,7 @@ void global_stat(FILE *fplog,
   enerd->term[F_TEMP] /= (cr->nnodes - cr->npmenodes);
 }
 
-int do_per_step(int step,int nstep)
+int do_per_step(int step,int nstep) /*watch this line*/
 {
   if (nstep != 0) 
     return ((step % nstep)==0); 
