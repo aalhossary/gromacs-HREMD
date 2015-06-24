@@ -1649,7 +1649,9 @@ time_t do_md(FILE *fplog,t_commrec *cr,int nfile,t_filenm fnm[],
     	// /*the  original replica_exchange() call line (we shall change this behavior later */
     	bExchanged =   replica_exchange(fplog,cr,repl_ex,state_global,enerd->term,state,step,t); /*watch this line*/
 
-    	enerd->term[F_EPOT]=epot_backup;
+    	if(MASTER(cr)){/* this check is added by Amr to prevent from a potential bug*/
+    		enerd->term[F_EPOT]=epot_backup;
+    	}
 
     }
     //////////////end of HREMD /////////////////////////////////
