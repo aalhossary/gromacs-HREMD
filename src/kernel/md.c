@@ -921,7 +921,7 @@ int mdrunner(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
                                       nstepout,inputrec,mtop,
                                       fcd,state,
                                       mdatoms,nrnb,wcycle,ed,fr,
-                                      repl_ex_nst,repl_ex_seed,
+                                      repl_ex_nst /*watch name*/,repl_ex_seed,
                                       cpt_period,max_hours,
                                       Flags,
                                       &runtime);
@@ -1419,7 +1419,7 @@ double do_md(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
     double     t,t0,lam0;
     bool       bGStatEveryStep,bGStat,bNstEner,bCalcPres,bCalcEner;
     bool       bNS,bNStList,bSimAnn,bStopCM,bRerunMD,bNotLastFrame=FALSE,
-               bFirstStep,bStateFromTPX,bInitStep,bLastStep,
+               bFirstStep,bStateFromTPX,bInitStep,bLastStep /*watch name*/,
                bBornRadii,bStartingFromCpt;
     bool       bDoDHDL=FALSE;
     bool       bNEMD,do_ene,do_log,do_verbose,bRerunWarnNoV=TRUE,
@@ -1485,6 +1485,17 @@ double do_md(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
     /* Temporary addition for FAHCORE checkpointing */
     int chkpt_ret;
 #endif
+
+    //////////////////// TINKER interface - leafyoung //////////////////////////////
+    const int LENGTH = 132;
+    char tempfn[200], fnscript[200], buffer[LENGTH+1];
+    char *s=buffer;
+    FILE *fp1;
+    real gb_ener = 10.0;
+    real epot_backup = 0.0;
+    int nn;//counter for the filename string length
+    //////////////////// End of TINKER interface - leafyoung //////////////////////////////
+
 
     /* Check for special mdrun options */
     bRerunMD = (Flags & MD_RERUN);
@@ -2476,7 +2487,7 @@ double do_md(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
                 write_sto_conf_mtop(ftp2fn(efSTO,nfile,fnm),
                                     *top_global->name,top_global,
                                     state_global->x,state_global->v,
-                                    ir->ePBC,state->box);
+                                    ir->ePBC,state->box);  /*watch this line*/
                 debug_gmx();
             }
             wallcycle_stop(wcycle,ewcTRAJ);
@@ -2920,13 +2931,60 @@ double do_md(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
 
         /* Replica exchange */
         bExchanged = FALSE;
-        if ((repl_ex_nst > 0) && (step > 0) && !bLastStep &&
-            do_per_step(step,repl_ex_nst)) 
-        {
-            bExchanged = replica_exchange(fplog,cr,repl_ex,
-                                          state_global,enerd->term,
-                                          state,step,t);
-        }
+
+    //////////////// start of HREMD ///////////////////////////////
+
+// /* if ((repl_ex_nst > 0) && (step > 0) && !bLastStep && do_per_step(step,repl_ex_nst))
+//      bExchanged = replica_exchange(fplog,cr,repl_ex,state_global,enerd->term, state,step,t); */
+
+    /*Exchange - leafyoung*/
+    if ((repl_ex_nst > 0) && (step > 0) && !bLastStep && do_per_step(step,repl_ex_nst)) {
+
+    	/*write conf - leafyoung */
+    	if ( MASTER(cr) ) {
+
+    		nn=strlen(ftp2fn(efLOG,nfile,fnm))-4;
+    		for (i=0;i<nn;i++) {
+    			tempfn[i]=ftp2fn(efLOG,nfile,fnm)[i];
+    		}
+    		tempfn[i]='\0';
+    		sprintf(tempfn, "%s_%d.pdb", tempfn, step);
+
+    		// /* there is sample of another function call for next function up in the same file */
+    		write_sto_conf_mtop(tempfn, *top_global->name,top_global, state_global->x,state_global->v, ir->ePBC,state->box);
+
+
+    		/*Do Tinker - leafyoung*/
+    		sprintf(fnscript, "./do_tinker_eval.sh %s", tempfn);
+    		if (( fp1=popen(fnscript, "r")) == NULL)
+    			gmx_fatal(FARGS,"Error opening read pipe", 1);
+
+    		if (fgets(s, LENGTH, fp1) != NULL ) {
+    			gb_ener=atof(s);
+    		} else {
+    			gmx_fatal(FARGS,"Error reading gb_ener", 1);
+    		}
+    		pclose(fp1);
+
+    		fprintf(fplog,"Exchange PotE(sys,gb_ener): %g %g \n", enerd->term[F_EPOT], gb_ener);
+    		epot_backup=enerd->term[F_EPOT];
+    		enerd->term[F_EPOT]=gb_ener;
+
+    	}
+    	// /*the  original replica_exchange() call line (we shall change this behavior later */
+    	bExchanged =   replica_exchange(fplog,cr,repl_ex,state_global,enerd->term,state,step,t); /*watch this line*/
+
+		if (MASTER(cr)) {/*This check was made by Amr to prevent a potential bug*/
+			enerd->term[F_EPOT]=epot_backup;
+		}
+
+    }
+    //////////////end of HREMD /////////////////////////////////
+
+
+
+
+
         if (bExchanged && PAR(cr)) 
         {
             if (DOMAINDECOMP(cr)) 
@@ -3052,7 +3110,7 @@ double do_md(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
     
     if (repl_ex_nst > 0 && MASTER(cr))
     {
-        print_replica_exchange_statistics(fplog,repl_ex);
+        print_replica_exchange_statistics(fplog,repl_ex);/*watch this line for future*/
     }
     
     runtime->nsteps_done = step_rel;

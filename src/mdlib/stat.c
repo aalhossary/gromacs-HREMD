@@ -415,7 +415,7 @@ void global_stat(FILE *fplog,gmx_global_stat_t gs,
   sfree(copyenerd);
 }
 
-int do_per_step(gmx_large_int_t step,gmx_large_int_t nstep)
+int do_per_step(gmx_large_int_t step,gmx_large_int_t nstep) /*watch this line*/
 {
   if (nstep != 0) 
     return ((step % nstep)==0); 
