@@ -63,7 +63,7 @@
 #include "mtop_util.h"
 
 /* This number should be increased whenever the file format changes! */
-static const int tpx_version = 69;
+static const int tpx_version = 70;
 
 /* This number should only be increased when you edit the TOPOLOGY section
  * of the tpx format. This way we can maintain forward compatibility too
@@ -74,7 +74,7 @@ static const int tpx_version = 69;
  * to the end of the tpx file, so we can just skip it if we only
  * want the topology.
  */
-static const int tpx_generation = 20;
+static const int tpx_generation = 22;
 
 /* This number should be the most recent backwards incompatible version 
  * I.e., if this number is 9, we cannot read tpx version 9 with this code.
@@ -124,6 +124,7 @@ static const t_ftupd ftupd[] = {
   { 34, F_FENEBONDS         },
   { 43, F_TABBONDS          },
   { 43, F_TABBONDSNC        },
+  { 70, F_RESTRBONDS        },
   { 30, F_CROSS_BOND_BONDS  },
   { 30, F_CROSS_BOND_ANGLES },
   { 30, F_UREY_BRADLEY      },
@@ -154,6 +155,7 @@ static const t_ftupd ftupd[] = {
   { 46, F_COM_PULL          },
   { 20, F_EQM               },
   { 46, F_ECONSERVED        },
+  { 69, F_VTEMP             },
   { 66, F_PDISPCORR         },
   { 54, F_DHDL_CON          },
 };
@@ -672,7 +674,11 @@ static void do_inputrec(t_inputrec *ir,bool bRead, int file_version,
     
     /* grpopts stuff */
     do_int(ir->opts.ngtc); 
-    do_int(ir->opts.nnhchains);
+    if (file_version >= 69) {
+      do_int(ir->opts.nnhchains);
+    } else {
+      ir->opts.nnhchains = 0;
+    }
     do_int(ir->opts.ngacc); 
     do_int(ir->opts.ngfrz); 
     do_int(ir->opts.ngener);
@@ -859,6 +865,16 @@ void do_iparams(t_functype ftype,t_iparams *iparams,bool bRead, int file_version
   case F_FENEBONDS:
     do_real(iparams->fene.bm);
     do_real(iparams->fene.kb);
+    break;
+  case F_RESTRBONDS:
+    do_real(iparams->restraint.lowA);
+    do_real(iparams->restraint.up1A);
+    do_real(iparams->restraint.up2A);
+    do_real(iparams->restraint.kA);
+    do_real(iparams->restraint.lowB);
+    do_real(iparams->restraint.up1B);
+    do_real(iparams->restraint.up2B);
+    do_real(iparams->restraint.kB);
     break;
   case F_TABBONDS:
   case F_TABBONDSNC:
@@ -1975,11 +1991,13 @@ static int do_tpx(int fp,bool bRead,
   
   if (state->ngtc > 0 && file_version >= 28) {
     real *dumv;
-    ndo_double(state->nosehoover_xi,state->ngtc,bDum); /* keeping this the same for now, to avoid compatibility issues
-							  Exact continuation is not guaranteed!x */
+    /*ndo_double(state->nosehoover_xi,state->ngtc,bDum);*/
     /*ndo_double(state->nosehoover_vxi,state->ngtc,bDum);*/
     /*ndo_double(state->therm_integral,state->ngtc,bDum);*/
     snew(dumv,state->ngtc);
+    if (file_version < 69) {
+      ndo_real(dumv,state->ngtc,bDum);
+    }
     /* These used to be the Berendsen tcoupl_lambda's */
     ndo_real(dumv,state->ngtc,bDum);
     sfree(dumv);
