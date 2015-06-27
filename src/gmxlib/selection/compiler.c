@@ -33,13 +33,17 @@
  *
  * \todo
  * Better error handling and memory management in error situations.
- * For example, memory handling in atom-valued method parameters within common
- * subexpressions may currently result in memory leaks.
- * Also, the main compilation function leaves the selection collection in
+ * At least, the main compilation function leaves the selection collection in
  * a bad state if an error occurs.
  *
  * \todo
  * The memory usage could be optimized.
+ * Currently, each selection element allocates a separate block of memory to
+ * hold the evaluated value, but most of this memory is not used
+ * simultaneously. Perhaps the cleanest solution (avoiding constant allocation
+ * and deallocation) would be to have a memory pool whose maximum size is
+ * determined at compilation time and allocate memory from the pool during
+ * evaluation.
  */
 /*! \internal
  * \page selcompiler Selection compilation
@@ -257,8 +261,41 @@
 
 #include "evaluate.h"
 #include "keywords.h"
+#include "mempool.h"
 #include "selcollection.h"
 #include "selelem.h"
+
+/*! \internal \brief
+ * Compiler flags.
+ */
+enum
+{
+    /*! \brief
+     * Whether a subexpression needs to evaluated for all atoms.
+     *
+     * This flag is set for \ref SEL_SUBEXPR elements that are used to
+     * evaluate non-atom-valued selection method parameters, as well as
+     * those that are used directly as values of selections.
+     */
+    SEL_CDATA_FULLEVAL    =  1,
+    /*! \brief
+     * Whether the whole subexpression should be treated as static.
+     *
+     * This flag is always FALSE if \ref SEL_DYNAMIC is set for the element,
+     * but it is also FALSE for static elements within common subexpressions.
+     */
+    SEL_CDATA_STATIC      =  2,
+    /** Whether the subexpression will always be evaluated in the same group. */
+    SEL_CDATA_STATICEVAL  =  4,
+    /** Whether the compiler evaluation routine should return the maximal selection. */
+    SEL_CDATA_EVALMAX     =  8,
+    /** Whether memory has been allocated for \p gmin and \p gmax. */
+    SEL_CDATA_MINMAXALLOC = 16,
+    /** Whether subexpressions use simple pass evaluation functions. */
+    SEL_CDATA_SIMPLESUBEXPR = 32,
+    /** Whether this expressions is a part of a common subexpression. */
+    SEL_CDATA_COMMONSUBEXPR = 64,
+};
 
 /*! \internal \brief
  * Internal data structure used by the compiler.
@@ -266,31 +303,13 @@
 typedef struct t_compiler_data
 {
     /** The real evaluation method. */
-    sel_evalfunc  evaluate; 
-    /*! \brief
-     * Whether the element is a method parameter.
-     *
-     * This flag is set for \ref SEL_SUBEXPR elements that are used to
-     * evaluate non-atom-valued selection method parameters.
-     */
-    bool          bMethodParam;
-    /*! \brief
-     * TRUE if the whole subexpression should be treated static.
-     *
-     * This flag is always FALSE if \ref SEL_DYNAMIC is set for the element,
-     * but it is also FALSE for static elements within common subexpressions.
-     */
-    bool          bStatic;
-    /** TRUE if the subexpression will always be evaluated with the same group. */
-    bool          bStaticEval;
-    /** TRUE if the compiler evaluation routine should return the maximal selection. */
-    bool          bEvalMax;
+    sel_evalfunc     evaluate;
+    /** Flags for specifying how to treat this element during compilation. */
+    int              flags;
     /** Smallest selection that can be selected by the subexpression. */
     gmx_ana_index_t *gmin;
     /** Largest selection that can be selected by the subexpression. */
     gmx_ana_index_t *gmax;
-    /** TRUE if memory has been allocated for \p gmin and \p gmax. */
-    bool             bMinMaxAlloc;
 } t_compiler_data;
 
 
@@ -311,7 +330,7 @@ _gmx_selelem_free_compiler_data(t_selelem *sel)
     if (sel->cdata)
     {
         sel->evaluate = sel->cdata->evaluate;
-        if (sel->cdata->bMinMaxAlloc)
+        if (sel->cdata->flags & SEL_CDATA_MINMAXALLOC)
         {
             sel->cdata->gmin->name = NULL;
             sel->cdata->gmax->name = NULL;
@@ -342,6 +361,10 @@ alloc_selection_data(t_selelem *sel, int isize, bool bChildEval)
 {
     int        nalloc;
 
+    if (sel->mempool)
+    {
+        return TRUE;
+    }
     /* Find out the number of elements to allocate */
     if (sel->flags & SEL_SINGLEVAL)
     {
@@ -374,9 +397,7 @@ alloc_selection_data(t_selelem *sel, int isize, bool bChildEval)
         nalloc = 1;
     }
     /* Allocate memory for sel->v.u if needed */
-    if ((sel->flags & SEL_ALLOCVAL)
-        || (sel->type == SEL_SUBEXPRREF && sel->u.param
-            && (sel->u.param->flags & (SPAR_VARNUM | SPAR_ATOMVAL))))
+    if (sel->flags & SEL_ALLOCVAL)
     {
         _gmx_selvalue_reserve(&sel->v, nalloc);
     }
@@ -418,8 +439,75 @@ set_evaluation_function(t_selelem *sel, sel_evalfunc eval)
 }
 
 /********************************************************************
- * SUBEXPRESSION EXTRACTION COMPILER PASS
+ * SUBEXPRESSION PROCESSING
  ********************************************************************/
+
+/*! \brief
+ * Reverses the chain of selection elements starting at \p root.
+ *
+ * \param   root First selection in the whole selection chain.
+ * \returns The new first element for the chain.
+ */
+static t_selelem *
+reverse_selelem_chain(t_selelem *root)
+{
+    t_selelem *item;
+    t_selelem *prev;
+    t_selelem *next;
+
+    prev = NULL;
+    item = root;
+    while (item)
+    {
+        next = item->next;
+        item->next = prev;
+        prev = item;
+        item = next;
+    }
+    return prev;
+}
+
+/*! \brief
+ * Removes subexpressions that don't have any references.
+ *
+ * \param     root First selection in the whole selection chain.
+ * \returns   The new first element for the chain.
+ *
+ * The elements are processed in reverse order to correctly detect
+ * subexpressions only referred to by other subexpressions.
+ */
+static t_selelem *
+remove_unused_subexpressions(t_selelem *root)
+{
+    t_selelem *item;
+    t_selelem *prev;
+    t_selelem *next;
+
+    root = reverse_selelem_chain(root);
+    while (root->child->type == SEL_SUBEXPR && root->child->refcount == 1)
+    {
+        next = root->next;
+        _gmx_selelem_free(root);
+        root = next;
+    }
+    prev = root;
+    item = root->next;
+    while (item)
+    {
+        next = item->next;
+        if (item->child->type == SEL_SUBEXPR && item->child->refcount == 1)
+        {
+            prev->next = next;
+            _gmx_selelem_free(item);
+        }
+        else
+        {
+            prev = item;
+        }
+        item = next;
+    }
+    return reverse_selelem_chain(root);
+}
 
 /*! \brief
  * Creates a name with a running number for a subexpression.
@@ -457,8 +545,7 @@ create_subexpression_name(t_selelem *sel, int i)
  * Processes and extracts subexpressions from a given selection subtree.
  *
  * \param   sel      Root of the subtree to process.
- * \param[in] gall     Index group that contains all the input atoms.
- * \param     subexprn Pointer to a subexpression counter.
+ * \param   subexprn Pointer to a subexpression counter.
  * \returns Pointer to a chain of subselections, or NULL if none were found.
  *
  * This function finds recursively all \ref SEL_SUBEXPRREF elements below
@@ -468,7 +555,7 @@ create_subexpression_name(t_selelem *sel, int i)
  * of these root elements.
  */
 static t_selelem *
-extract_item_subselections(t_selelem *sel, gmx_ana_index_t *gall, int *subexprn)
+extract_item_subselections(t_selelem *sel, int *subexprn)
 {
     t_selelem *root;
     t_selelem *subexpr;
@@ -480,11 +567,11 @@ extract_item_subselections(t_selelem *sel, gmx_ana_index_t *gall, int *subexprn)
     {
         if (!root)
         {
-            root = subexpr = extract_item_subselections(child, gall, subexprn);
+            root = subexpr = extract_item_subselections(child, subexprn);
         }
         else
         {
-            subexpr->next = extract_item_subselections(child, gall, subexprn);
+            subexpr->next = extract_item_subselections(child, subexprn);
         }
         while (subexpr && subexpr->next)
         {
@@ -509,11 +596,6 @@ extract_item_subselections(t_selelem *sel, gmx_ana_index_t *gall, int *subexprn)
             {
                 subexpr->next = _gmx_selelem_create(SEL_ROOT);
                 subexpr       = subexpr->next;
-            }
-            /* Set the evaluation group to all atoms */
-            if (!(child->flags & SEL_ATOMVAL))
-            {
-                gmx_ana_index_set(&subexpr->u.cgrp, gall->isize, gall->index, NULL, 0);
             }
             /* Create the subexpression element and/or
              * move the actual subexpression under the created element. */
@@ -544,7 +626,6 @@ extract_item_subselections(t_selelem *sel, gmx_ana_index_t *gall, int *subexprn)
  * Extracts subexpressions of the selection chain.
  * 
  * \param   sel First selection in the whole selection chain.
- * \param[in] gall Index group that contains all the input atoms.
  * \returns The new first element for the chain.
  *
  * Finds all the subexpressions (and their subexpressions) in the
@@ -555,7 +636,7 @@ extract_item_subselections(t_selelem *sel, gmx_ana_index_t *gall, int *subexprn)
  * refer to them.
  */
 static t_selelem *
-extract_subexpressions(t_selelem *sel, gmx_ana_index_t *gall)
+extract_subexpressions(t_selelem *sel)
 {
     t_selelem   *root, *item, *next;
     int          subexprn;
@@ -565,7 +646,7 @@ extract_subexpressions(t_selelem *sel, gmx_ana_index_t *gall)
     next = sel;
     while (next)
     {
-        item = extract_item_subselections(next, gall, &subexprn);
+        item = extract_item_subselections(next, &subexprn);
         if (item)
         {
             if (!root)
@@ -591,6 +672,7 @@ extract_subexpressions(t_selelem *sel, gmx_ana_index_t *gall)
     }
     return root;
 }
+
 
 /********************************************************************
  * BOOLEAN OPERATION REORDERING COMPILER PASS
@@ -748,70 +830,101 @@ reorder_boolean_static_children(t_selelem *sel)
 }
 
 /********************************************************************
- * EVALUATION PREPARATION COMPILER PASS
+ * ARITHMETIC EXPRESSION PROCESSING
  ********************************************************************/
 
 /*! \brief
- * Initializes the evaluation groups for the selections.
+ * Processes arithmetic expressions to simplify and speed up evaluation.
  *
- * \param[in,out] sc   Selection collection data.
+ * \param  sel Root of the selection subtree to process.
  *
- * The evaluation group of each \ref SEL_ROOT element corresponding to a
- * selection in \p sc is set to \p gall.
- */
-static void
-initialize_evalgrps(gmx_ana_selcollection_t *sc)
-{
-    t_selelem   *item;
-    int          i;
-
-    /* Initialize the output */
-    for (i = 0; i < sc->nr; ++i)
-    {
-        item = sc->sel[i]->selelem;
-        /* Set the evaluation group to all atoms */
-        gmx_ana_index_set(&item->u.cgrp, sc->gall.isize, sc->gall.index,
-                          item->u.cgrp.name, 0);
-    }
-}
-
-/*! \brief
- * Prepares the selection (sub)tree for evaluation.
- *
- * \param[in,out] sel Root of the selection subtree to prepare.
- * \returns       TRUE on success, FALSE if any subexpression fails.
- *
- * This function sets the evaluation function (\c t_selelem::evaluate)
- * for the selection elements.
- * It also allocates memory for the \p sel->v.u.g or \p sel->v.u.p
- * structure if required.
+ * Currently, this function only converts integer constants to reals
+ * within arithmetic expressions.
  */
 static bool
-init_item_evaluation(t_selelem *sel)
+optimize_arithmetic_expressions(t_selelem *sel)
 {
-    t_selelem         *child;
+    t_selelem  *child;
+    bool        bOk;
 
-    /* Process children */
+    /* Do recursively for children. */
     if (sel->type != SEL_SUBEXPRREF)
     {
         child = sel->child;
         while (child)
         {
-            if (!init_item_evaluation(child))
+            bOk = optimize_arithmetic_expressions(child);
+            if (!bOk)
             {
-                return FALSE;
+                return bOk;
             }
             child = child->next;
         }
     }
 
-    /* Make sure that the group/position structure is allocated */
-    if (!sel->v.u.ptr && (sel->flags & SEL_ALLOCVAL))
+    if (sel->type != SEL_ARITHMETIC)
     {
-        if (sel->v.type == GROUP_VALUE || sel->v.type == POS_VALUE)
+        return TRUE;
+    }
+
+    /* Convert integer constants to reals. */
+    child = sel->child;
+    while (child)
+    {
+        if (child->v.type == INT_VALUE)
         {
-            _gmx_selvalue_reserve(&sel->v, 1);
-            sel->v.nr = 1;
+            real  *r;
+
+            if (child->type != SEL_CONST)
+            {
+                gmx_impl("Non-constant integer expressions not implemented in arithmetic evaluation");
+                return FALSE;
+            }
+            snew(r, 1);
+            r[0] = child->v.u.i[0];
+            sfree(child->v.u.i);
+            child->v.u.r = r;
+            child->v.type = REAL_VALUE;
+        }
+        else if (child->v.type != REAL_VALUE)
+        {
+            gmx_bug("Internal error");
+            return FALSE;
+        }
+        child = child->next;
+    }
+    return TRUE;
+}
+
+/********************************************************************
+ * EVALUATION PREPARATION COMPILER PASS
+ ********************************************************************/
+
+/*! \brief
+ * Sets the evaluation functions for the selection (sub)tree.
+ *
+ * \param[in,out] sel Root of the selection subtree to process.
+ * \returns       TRUE on success, FALSE if any subexpression fails.
+ *
+ * This function sets the evaluation function (\c t_selelem::evaluate)
+ * for the selection elements.
+ */
+static bool
+init_item_evalfunc(t_selelem *sel)
+{
+    /* Process children. */
+    if (sel->type != SEL_SUBEXPRREF)
+    {
+        t_selelem *child;
+
+        child = sel->child;
+        while (child)
+        {
+            if (!init_item_evalfunc(child))
+            {
+                return FALSE;
+            }
+            child = child->next;
         }
     }
 
@@ -832,6 +945,10 @@ init_item_evaluation(t_selelem *sel)
                 sel->flags |= SEL_INITFRAME;
             }
             sel->evaluate = &_gmx_sel_evaluate_method;
+            break;
+
+        case SEL_ARITHMETIC:
+            sel->evaluate = &_gmx_sel_evaluate_arithmetic;
             break;
 
         case SEL_MODIFIER:
@@ -858,18 +975,127 @@ init_item_evaluation(t_selelem *sel)
             break;
 
         case SEL_SUBEXPR:
-            sel->evaluate = &_gmx_sel_evaluate_subexpr;
+            sel->evaluate = (sel->refcount == 2
+                             ? &_gmx_sel_evaluate_subexpr_simple
+                             : &_gmx_sel_evaluate_subexpr);
             break;
 
         case SEL_SUBEXPRREF:
             sel->name     = sel->child->name;
-            sel->evaluate = &_gmx_sel_evaluate_subexprref;
+            sel->evaluate = (sel->child->refcount == 2
+                             ? &_gmx_sel_evaluate_subexprref_simple
+                             : &_gmx_sel_evaluate_subexprref);
             break;
     }
 
     return TRUE;
 }
 
+/*! \brief
+ * Sets the memory pool for selection elements that can use it.
+ *
+ * \param     sel      Root of the selection subtree to process.
+ * \param[in] mempool  Memory pool to use.
+ */
+static void
+setup_memory_pooling(t_selelem *sel, gmx_sel_mempool_t *mempool)
+{
+    if (sel->type != SEL_SUBEXPRREF)
+    {
+        t_selelem         *child;
+
+        child = sel->child;
+        while (child)
+        {
+            if ((sel->type == SEL_BOOLEAN && (child->flags & SEL_DYNAMIC))
+                || (sel->type == SEL_ARITHMETIC && child->type != SEL_CONST
+                    && !(child->flags & SEL_SINGLEVAL))
+                || (sel->type == SEL_SUBEXPR && sel->refcount > 2))
+            {
+                child->mempool = mempool;
+                if (child->type == SEL_SUBEXPRREF
+                    && child->child->refcount == 2)
+                {
+                    child->child->child->mempool = mempool;
+                }
+            }
+            setup_memory_pooling(child, mempool);
+            child = child->next;
+        }
+    }
+}
+
+/*! \brief
+ * Prepares the selection (sub)tree for evaluation.
+ *
+ * \param[in,out] sel Root of the selection subtree to prepare.
+ *
+ * It also allocates memory for the \p sel->v.u.g or \p sel->v.u.p
+ * structure if required.
+ */
+static void
+init_item_evaloutput(t_selelem *sel)
+{
+    /* Process children. */
+    if (sel->type != SEL_SUBEXPRREF)
+    {
+        t_selelem *child;
+
+        child = sel->child;
+        while (child)
+        {
+            init_item_evaloutput(child);
+            child = child->next;
+        }
+    }
+
+    if (sel->type == SEL_SUBEXPR && sel->refcount == 2)
+    {
+        sel->flags &= ~(SEL_ALLOCVAL | SEL_ALLOCDATA);
+        if (sel->v.type == GROUP_VALUE || sel->v.type == POS_VALUE)
+        {
+            _gmx_selvalue_setstore(&sel->v, sel->child->v.u.ptr);
+        }
+    }
+    else if (sel->type == SEL_SUBEXPR
+             && (sel->cdata->flags & SEL_CDATA_FULLEVAL))
+    {
+        sel->evaluate = &_gmx_sel_evaluate_subexpr_staticeval;
+        sel->cdata->evaluate = sel->evaluate;
+        sel->child->mempool = NULL;
+        sel->flags &= ~(SEL_ALLOCVAL | SEL_ALLOCDATA);
+        if (sel->v.type == GROUP_VALUE || sel->v.type == POS_VALUE)
+        {
+            _gmx_selvalue_setstore(&sel->v, sel->child->v.u.ptr);
+        }
+    }
+    else if (sel->type == SEL_SUBEXPRREF && sel->child->refcount == 2)
+    {
+        if (sel->v.u.ptr)
+        {
+            _gmx_selvalue_setstore(&sel->child->v, sel->v.u.ptr);
+            _gmx_selelem_free_values(sel->child->child);
+            sel->child->child->flags &= ~(SEL_ALLOCVAL | SEL_ALLOCDATA);
+            sel->child->child->flags |= (sel->flags & SEL_ALLOCDATA);
+            _gmx_selvalue_setstore(&sel->child->child->v, sel->v.u.ptr);
+        }
+        else if (sel->v.type == GROUP_VALUE || sel->v.type == POS_VALUE)
+        {
+            _gmx_selvalue_setstore(&sel->v, sel->child->child->v.u.ptr);
+        }
+        sel->flags &= ~(SEL_ALLOCVAL | SEL_ALLOCDATA);
+    }
+
+    /* Make sure that the group/position structure is allocated. */
+    if (!sel->v.u.ptr && (sel->flags & SEL_ALLOCVAL))
+    {
+        if (sel->v.type == GROUP_VALUE || sel->v.type == POS_VALUE)
+        {
+            _gmx_selvalue_reserve(&sel->v, 1);
+            sel->v.nr = 1;
+        }
+    }
+}
 
 /********************************************************************
  * COMPILER DATA INITIALIZATION PASS
@@ -892,22 +1118,33 @@ init_item_compilerdata(t_selelem *sel)
     sel->cdata->evaluate = sel->evaluate;
 
     /* Initialize the flags */
-    sel->cdata->bMethodParam = FALSE;
-    sel->cdata->bStatic      = !(sel->flags & SEL_DYNAMIC);
-    sel->cdata->bStaticEval  = TRUE;
-    sel->cdata->bEvalMax     = (sel->type == SEL_SUBEXPR ? TRUE : FALSE);
-    /* Set the method parameter flag for non-atom-valued parameters */
+    sel->cdata->flags = SEL_CDATA_STATICEVAL;
+    if (!(sel->flags & SEL_DYNAMIC))
+    {
+        sel->cdata->flags |= SEL_CDATA_STATIC;
+    }
+    if (sel->type == SEL_SUBEXPR)
+    {
+        sel->cdata->flags |= SEL_CDATA_EVALMAX;
+    }
+    /* Set the full evaluation flag for subexpressions that require it;
+     * the subexpression has already been initialized, so we can simply
+     * access its compilation flags.*/
     if (sel->type == SEL_EXPRESSION || sel->type == SEL_MODIFIER)
     {
         child = sel->child;
         while (child)
         {
-            if (!(child->flags & SEL_ATOMVAL))
+            if (!(child->flags & SEL_ATOMVAL) && child->child)
             {
-                child->child->cdata->bMethodParam = TRUE;
+                child->child->cdata->flags |= SEL_CDATA_FULLEVAL;
             }
             child = child->next;
         }
+    }
+    else if (sel->type == SEL_ROOT && sel->child->type == SEL_SUBEXPRREF)
+    {
+        sel->child->child->cdata->flags |= SEL_CDATA_FULLEVAL;
     }
 
     /* Initialize children */
@@ -931,10 +1168,13 @@ init_item_compilerdata(t_selelem *sel)
         child = sel->child;
         while (child)
         {
-            child->cdata->bEvalMax = bEvalMax;
-            if (child->type == SEL_BOOLEAN && child->u.boolt == BOOL_NOT)
+            if (bEvalMax)
             {
-                child->child->cdata->bEvalMax = !bEvalMax;
+                child->cdata->flags |= SEL_CDATA_EVALMAX;
+            }
+            else if (child->type == SEL_BOOLEAN && child->u.boolt == BOOL_NOT)
+            {
+                child->child->cdata->flags |= SEL_CDATA_EVALMAX;
             }
             child = child->next;
         }
@@ -945,30 +1185,8 @@ init_item_compilerdata(t_selelem *sel)
         child = sel->child;
         while (child)
         {
-            child->cdata->bEvalMax = TRUE;
+            child->cdata->flags |= SEL_CDATA_EVALMAX;
             child = child->next;
-        }
-    }
-
-    /* Initialize the minimum and maximum evaluation groups */
-    sel->cdata->bMinMaxAlloc = FALSE;
-    if (sel->type != SEL_ROOT && sel->v.type != NO_VALUE)
-    {
-        if (sel->type == SEL_SUBEXPR)
-        {
-            sel->cdata->gmin = sel->child->cdata->gmin;
-            sel->cdata->gmax = sel->child->cdata->gmax;
-        }
-        else if (sel->v.type == GROUP_VALUE && sel->cdata->bStatic)
-        {
-            sel->cdata->gmin = sel->v.u.g;
-            sel->cdata->gmax = sel->v.u.g;
-        }
-        else
-        {
-            sel->cdata->bMinMaxAlloc = TRUE;
-            snew(sel->cdata->gmin, 1);
-            snew(sel->cdata->gmax, 1);
         }
     }
 }
@@ -989,15 +1207,16 @@ init_item_staticeval(t_selelem *sel)
 {
     t_selelem   *child;
 
-    /* Non-atom-valued method parameters should always have bStaticEval,
+    /* Subexpressions with full evaluation should always have bStaticEval,
      * so don't do anything if a reference to them is encountered. */
-    if (sel->type == SEL_SUBEXPRREF && sel->child->cdata->bMethodParam)
+    if (sel->type == SEL_SUBEXPRREF
+        && (sel->child->cdata->flags & SEL_CDATA_FULLEVAL))
     {
         return;
     }
 
     /* Propagate the bStaticEval flag to children if it is not set */
-    if (!sel->cdata->bStaticEval)
+    if (!(sel->cdata->flags & SEL_CDATA_STATICEVAL))
     {
         child = sel->child;
         while (child)
@@ -1005,9 +1224,9 @@ init_item_staticeval(t_selelem *sel)
             if ((sel->type != SEL_EXPRESSION && sel->type != SEL_MODIFIER)
                 || (child->flags & SEL_ATOMVAL))
             {
-                if (child->cdata->bStaticEval)
+                if (child->cdata->flags & SEL_CDATA_STATICEVAL)
                 {
-                    child->cdata->bStaticEval = FALSE;
+                    child->cdata->flags &= ~SEL_CDATA_STATICEVAL;
                     init_item_staticeval(child);
                 }
             }
@@ -1031,7 +1250,7 @@ init_item_staticeval(t_selelem *sel)
             }
             while (child)
             {
-                child->cdata->bStaticEval = FALSE;
+                child->cdata->flags &= ~SEL_CDATA_STATICEVAL;
                 child = child->next;
             }
         }
@@ -1043,6 +1262,131 @@ init_item_staticeval(t_selelem *sel)
             init_item_staticeval(child);
             child = child->next;
         }
+    }
+}
+
+/*! \brief
+ * Initializes compiler flags for subexpressions.
+ *
+ * \param sel Root of the selection subtree to process.
+ */
+static void
+init_item_subexpr_flags(t_selelem *sel)
+{
+    if (sel->type == SEL_SUBEXPR)
+    {
+        if (sel->refcount == 2)
+        {
+            sel->cdata->flags |= SEL_CDATA_SIMPLESUBEXPR;
+        }
+        else if (!(sel->cdata->flags & SEL_CDATA_FULLEVAL))
+        {
+            sel->cdata->flags |= SEL_CDATA_COMMONSUBEXPR;
+        }
+    }
+    else if (sel->type == SEL_SUBEXPRREF && sel->child->refcount == 2)
+    {
+        sel->cdata->flags |= SEL_CDATA_SIMPLESUBEXPR;
+    }
+
+    /* Process children, but only follow subexpression references if the
+     * common subexpression flag needs to be propagated. */
+    if (sel->type != SEL_SUBEXPRREF
+        || ((sel->cdata->flags & SEL_CDATA_COMMONSUBEXPR)
+            && sel->child->refcount > 2))
+    {
+        t_selelem *child = sel->child;
+
+        while (child)
+        {
+            if (!(child->cdata->flags & SEL_CDATA_COMMONSUBEXPR))
+            {
+                if (sel->type != SEL_EXPRESSION || (child->flags & SEL_ATOMVAL))
+                {
+                    child->cdata->flags |=
+                        (sel->cdata->flags & SEL_CDATA_COMMONSUBEXPR);
+                }
+                init_item_subexpr_flags(child);
+            }
+            child = child->next;
+        }
+    }
+}
+
+/*! \brief
+ * Initializes the gmin and gmax fields of the compiler data structure.
+ *
+ * \param sel Root of the selection subtree to process.
+ */
+static void
+init_item_minmax_groups(t_selelem *sel)
+{
+    /* Process children. */
+    if (sel->type != SEL_SUBEXPRREF)
+    {
+        t_selelem *child;
+
+        child = sel->child;
+        while (child)
+        {
+            init_item_minmax_groups(child);
+            child = child->next;
+        }
+    }
+
+    /* Initialize the minimum and maximum evaluation groups. */
+    if (sel->type != SEL_ROOT && sel->v.type != NO_VALUE)
+    {
+        if (sel->v.type == GROUP_VALUE
+            && (sel->cdata->flags & SEL_CDATA_STATIC))
+        {
+            sel->cdata->gmin = sel->v.u.g;
+            sel->cdata->gmax = sel->v.u.g;
+        }
+        else if (sel->type == SEL_SUBEXPR
+                 && ((sel->cdata->flags & SEL_CDATA_SIMPLESUBEXPR)
+                     || (sel->cdata->flags & SEL_CDATA_FULLEVAL)))
+        {
+            sel->cdata->gmin = sel->child->cdata->gmin;
+            sel->cdata->gmax = sel->child->cdata->gmax;
+        }
+        else
+        {
+            sel->cdata->flags |= SEL_CDATA_MINMAXALLOC;
+            snew(sel->cdata->gmin, 1);
+            snew(sel->cdata->gmax, 1);
+        }
+    }
+}
+
+/********************************************************************
+ * EVALUATION GROUP INITIALIZATION
+ ********************************************************************/
+
+/*! \brief
+ * Initializes evaluation groups for root items.
+ *
+ * \param[in,out] sc   Selection collection data.
+ *
+ * The evaluation group of each \ref SEL_ROOT element corresponding to a
+ * selection in \p sc is set to \p gall.  The same is done for \ref SEL_ROOT
+ * elements corresponding to subexpressions that need full evaluation.
+ */
+static void
+initialize_evalgrps(gmx_ana_selcollection_t *sc)
+{
+    t_selelem   *root;
+
+    root = sc->root;
+    while (root)
+    {
+        if (root->child->type != SEL_SUBEXPR
+            || (root->child->cdata->flags & SEL_CDATA_FULLEVAL))
+        {
+            gmx_ana_index_set(&root->u.cgrp, sc->gall.isize, sc->gall.index,
+                              root->u.cgrp.name, 0);
+        }
+        root = root->next;
     }
 }
 
@@ -1067,7 +1411,14 @@ mark_subexpr_dynamic(t_selelem *sel, bool bDynamic)
 {
     t_selelem *child;
 
-    sel->cdata->bStatic = (!bDynamic && !(sel->flags & SEL_DYNAMIC));
+    if (!bDynamic && !(sel->flags & SEL_DYNAMIC))
+    {
+        sel->cdata->flags |= SEL_CDATA_STATIC;
+    }
+    else
+    {
+        sel->cdata->flags &= ~SEL_CDATA_STATIC;
+    }
     child = sel->child;
     while (child)
     {
@@ -1077,6 +1428,47 @@ mark_subexpr_dynamic(t_selelem *sel, bool bDynamic)
             mark_subexpr_dynamic(child, bDynamic);
         }
         child = child->next;
+    }
+}
+
+/*! \brief
+ * Frees memory for subexpressions that are no longer needed.
+ *
+ * \param     sel      Selection subtree to check.
+ *
+ * Checks whether the subtree rooted at \p sel refers to any \ref SEL_SUBEXPR
+ * elements that are not referred to by anything else except their own root
+ * element. If such elements are found, all memory allocated for them is freed
+ * except the actual element. The element is left because otherwise a dangling
+ * pointer would be left at the root element, which is not traversed by this
+ * function. Later compilation passes remove the stub elements.
+ */
+static void
+release_subexpr_memory(t_selelem *sel)
+{
+    if (sel->type == SEL_SUBEXPR)
+    {
+        if (sel->refcount == 2)
+        {
+            release_subexpr_memory(sel->child);
+            sel->name = NULL;
+            _gmx_selelem_free_chain(sel->child);
+            _gmx_selelem_free_values(sel);
+            _gmx_selelem_free_exprdata(sel);
+            _gmx_selelem_free_compiler_data(sel);
+            sel->child = NULL;
+        }
+    }
+    else
+    {
+        t_selelem *child;
+
+        child = sel->child;
+        while (child)
+        {
+            release_subexpr_memory(child);
+            child = child->next;
+        }
     }
 }
 
@@ -1092,6 +1484,37 @@ mark_subexpr_dynamic(t_selelem *sel, bool bDynamic)
 static void
 make_static(t_selelem *sel)
 {
+    /* If this is a subexpression reference and the data is stored in the
+     * child, we transfer data ownership before doing anything else. */
+    if (sel->type == SEL_SUBEXPRREF
+        && (sel->cdata->flags & SEL_CDATA_SIMPLESUBEXPR))
+    {
+        if (sel->child->child->flags & SEL_ALLOCDATA)
+        {
+            sel->flags |= SEL_ALLOCDATA;
+            sel->child->child->flags &= ~SEL_ALLOCDATA;
+        }
+        if (sel->child->child->flags & SEL_ALLOCVAL)
+        {
+            sel->flags |= SEL_ALLOCVAL;
+            sel->v.nalloc = sel->child->child->v.nalloc;
+            sel->child->child->flags &= ~SEL_ALLOCVAL;
+            sel->child->child->v.nalloc = -1;
+        }
+    }
+    /* When we reach here for parameter elements, the value is already
+     * stored in the parent element, so make sure that it is not freed
+     * through this element. */
+    if (sel->type == SEL_SUBEXPRREF && sel->u.param)
+    {
+        sel->u.param->val.nalloc = sel->v.nalloc;
+        sel->flags &= ~(SEL_ALLOCVAL | SEL_ALLOCDATA);
+        sel->v.nalloc = -1;
+    }
+    /* Free the children. */
+    release_subexpr_memory(sel);
+    _gmx_selelem_free_chain(sel->child);
+    sel->child           = NULL;
     /* Free the expression data as it is no longer needed */
     _gmx_selelem_free_exprdata(sel);
     /* Make the item static */
@@ -1099,13 +1522,8 @@ make_static(t_selelem *sel)
     sel->type            = SEL_CONST;
     sel->evaluate        = NULL;
     sel->cdata->evaluate = NULL;
-    /* Free the children */
-    _gmx_selelem_free_chain(sel->child);
-    sel->child           = NULL;
     /* Set the group value.
-     * None of the elements for which this function may be called uses
-     * the cgrp group, so we can simply overwrite the contents without
-     * worrying about memory leaks. */
+     * free_exprdata above frees the cgrp group, so we can just override it. */
     if (sel->v.type == GROUP_VALUE)
     {
         gmx_ana_index_set(&sel->u.cgrp, sel->v.u.g->isize, sel->v.u.g->index, NULL, 0);
@@ -1113,7 +1531,7 @@ make_static(t_selelem *sel)
 }
 
 /*! \brief
- * Evaluates a constant expression during analyze_static() and analyze_static2().
+ * Evaluates a constant expression during analyze_static().
  *
  * \param[in]     data Evaluation data.
  * \param[in,out] sel Selection to process.
@@ -1209,18 +1627,6 @@ init_method(t_selelem *sel, t_topology *top, int isize)
         && (bAtomVal || !(sel->flags & SEL_METHODINIT)))
     {
         sel->flags |= SEL_METHODINIT;
-        /* The allocation flags are cleared first to not to free anything if
-         * initialization fails. */
-        child = sel->child;
-        if (sel->type == SEL_MODIFIER && sel->v.type != NO_VALUE)
-        {
-            child = child->next;
-        }
-        while (child)
-        {
-            child->flags &= ~(SEL_ALLOCVAL | SEL_ALLOCDATA);
-            child = child->next;
-        }
         rc = sel->u.expr.method->init(top, sel->u.expr.method->nparams,
                 sel->u.expr.method->param, sel->u.expr.mdata);
         if (rc != 0)
@@ -1297,11 +1703,11 @@ evaluate_boolean_static_part(gmx_sel_evaluate_t *data, t_selelem *sel,
 
     /* Find the last static subexpression */
     child = sel->child;
-    while (child->next && child->next->cdata->bStatic)
+    while (child->next && (child->next->cdata->flags & SEL_CDATA_STATIC))
     {
         child = child->next;
     }
-    if (!child->cdata->bStatic)
+    if (!(child->cdata->flags & SEL_CDATA_STATIC))
     {
         return 0;
     }
@@ -1326,7 +1732,9 @@ evaluate_boolean_static_part(gmx_sel_evaluate_t *data, t_selelem *sel,
         _gmx_selvalue_reserve(&child->v, 1);
         gmx_ana_index_copy(child->v.u.g, sel->v.u.g, TRUE);
         init_item_compilerdata(child);
-        child->cdata->bStaticEval = sel->cdata->bStaticEval;
+        init_item_minmax_groups(child);
+        child->cdata->flags &= ~SEL_CDATA_STATICEVAL;
+        child->cdata->flags |= sel->cdata->flags & SEL_CDATA_STATICEVAL;
         child->next = next;
         sel->child = child;
     }
@@ -1347,7 +1755,8 @@ evaluate_boolean_static_part(gmx_sel_evaluate_t *data, t_selelem *sel,
      * time copying the group. */
     child->evaluate = NULL;
     if (sel->u.boolt == BOOL_NOT
-        || (sel->cdata->bStaticEval && sel->u.boolt == BOOL_OR))
+        || ((sel->cdata->flags & SEL_CDATA_STATICEVAL)
+            && sel->u.boolt == BOOL_OR))
     {
         child->cdata->evaluate = NULL;
     }
@@ -1420,7 +1829,7 @@ evaluate_boolean_minmax_grps(t_selelem *sel, gmx_ana_index_t *g,
                 child = child->next;
             }
             /* Update the static part if other expressions limit it */
-            if (sel->child->cdata->bStatic
+            if ((sel->child->cdata->flags & SEL_CDATA_STATIC)
                 && sel->child->v.u.g->isize > gmax->isize)
             {
                 gmx_ana_index_copy(sel->child->v.u.g, gmax, FALSE);
@@ -1449,7 +1858,7 @@ evaluate_boolean_minmax_grps(t_selelem *sel, gmx_ana_index_t *g,
             }
             /* Update the static part if other expressions have static parts
              * that are not included. */
-            if (sel->child->cdata->bStatic
+            if ((sel->child->cdata->flags & SEL_CDATA_STATIC)
                 && sel->child->v.u.g->isize < gmin->isize)
             {
                 gmx_ana_index_reserve(sel->child->v.u.g, gmin->isize);
@@ -1486,25 +1895,24 @@ evaluate_boolean_minmax_grps(t_selelem *sel, gmx_ana_index_t *g,
  * The above is exactly true only for elements other than subexpressions:
  * another pass is required for subexpressions that are referred to more than
  * once to evaluate the static parts.
- * This second pass is performed by analyze_static2().
- *
- * \see analyze_static2()
  */
 static int
 analyze_static(gmx_sel_evaluate_t *data, t_selelem *sel, gmx_ana_index_t *g)
 {
     t_selelem       *child, *next;
-    gmx_ana_index_t  gmin, gmax;
-    bool             bDelayAlloc;
+    bool             bDoMinMax;
     int              rc;
-
-    gmx_ana_index_clear(&gmin);
-    gmx_ana_index_clear(&gmax);
-    bDelayAlloc = FALSE;
 
     if (sel->type != SEL_ROOT && g)
     {
-        bDelayAlloc = !alloc_selection_data(sel, g->isize, FALSE);
+        alloc_selection_data(sel, g->isize, FALSE);
+    }
+
+    bDoMinMax = (sel->cdata->flags & SEL_CDATA_MINMAXALLOC);
+    if (sel->type != SEL_SUBEXPR && bDoMinMax)
+    {
+        gmx_ana_index_deinit(sel->cdata->gmin);
+        gmx_ana_index_deinit(sel->cdata->gmax);
     }
 
     /* TODO: This switch is awfully long... */
@@ -1530,7 +1938,7 @@ analyze_static(gmx_sel_evaluate_t *data, t_selelem *sel, gmx_ana_index_t *g)
             if (!(sel->flags & SEL_DYNAMIC))
             {
                 rc = sel->cdata->evaluate(data, sel, g);
-                if (rc == 0 && sel->cdata->bStatic)
+                if (rc == 0 && (sel->cdata->flags & SEL_CDATA_STATIC))
                 {
                     make_static(sel);
                 }
@@ -1544,7 +1952,10 @@ analyze_static(gmx_sel_evaluate_t *data, t_selelem *sel, gmx_ana_index_t *g)
                 {
                     rc = sel->cdata->evaluate(data, sel, g);
                 }
-                gmx_ana_index_copy(&gmax, g, TRUE);
+                if (bDoMinMax)
+                {
+                    gmx_ana_index_copy(sel->cdata->gmax, g, TRUE);
+                }
             }
             break;
 
@@ -1552,7 +1963,7 @@ analyze_static(gmx_sel_evaluate_t *data, t_selelem *sel, gmx_ana_index_t *g)
             if (!(sel->flags & SEL_DYNAMIC))
             {
                 rc = sel->cdata->evaluate(data, sel, g);
-                if (rc == 0 && sel->cdata->bStatic)
+                if (rc == 0 && (sel->cdata->flags & SEL_CDATA_STATIC))
                 {
                     make_static(sel);
                 }
@@ -1584,7 +1995,27 @@ analyze_static(gmx_sel_evaluate_t *data, t_selelem *sel, gmx_ana_index_t *g)
                 }
 
                 /* Evaluate minimal and maximal selections */
-                evaluate_boolean_minmax_grps(sel, g, &gmin, &gmax);
+                evaluate_boolean_minmax_grps(sel, g, sel->cdata->gmin,
+                                             sel->cdata->gmax);
+            }
+            break;
+
+        case SEL_ARITHMETIC:
+            rc = sel->cdata->evaluate(data, sel, g);
+            if (rc != 0)
+            {
+                return rc;
+            }
+            if (!(sel->flags & SEL_DYNAMIC))
+            {
+                if (sel->cdata->flags & SEL_CDATA_STATIC)
+                {
+                    make_static(sel);
+                }
+            }
+            else if (bDoMinMax)
+            {
+                gmx_ana_index_copy(sel->cdata->gmax, g, TRUE);
             }
             break;
 
@@ -1593,28 +2024,19 @@ analyze_static(gmx_sel_evaluate_t *data, t_selelem *sel, gmx_ana_index_t *g)
             break;
 
         case SEL_SUBEXPR:
-            if (sel->u.cgrp.isize == 0)
+            if (sel->cdata->flags & (SEL_CDATA_SIMPLESUBEXPR | SEL_CDATA_FULLEVAL))
+            {
+                rc = sel->cdata->evaluate(data, sel, g);
+                _gmx_selvalue_setstore(&sel->v, sel->child->v.u.ptr);
+            }
+            else if (sel->u.cgrp.isize == 0)
             {
                 gmx_ana_index_reserve(&sel->u.cgrp, g->isize);
-                if (bDelayAlloc)
+                rc = sel->cdata->evaluate(data, sel, g);
+                if (bDoMinMax)
                 {
-                    /* We need to evaluate the child before we can allocate the
-                     * memory. */
-                    rc = sel->child->evaluate(data, sel->child, g);
-                    if (rc != 0)
-                    {
-                        return rc;
-                    }
-                    alloc_selection_data(sel, g->isize, TRUE);
-                    /* Do not evaluate the child again */
-                    sel->child->evaluate = NULL;
-                    rc = sel->cdata->evaluate(data, sel, g);
-                    sel->child->evaluate = &analyze_static;
-                }
-                else
-                {
-                    alloc_selection_data(sel->child, g->isize, FALSE);
-                    rc = sel->cdata->evaluate(data, sel, g);
+                    gmx_ana_index_copy(sel->cdata->gmin, sel->child->cdata->gmin, TRUE);
+                    gmx_ana_index_copy(sel->cdata->gmax, sel->child->cdata->gmax, TRUE);
                 }
             }
             else
@@ -1624,75 +2046,69 @@ analyze_static(gmx_sel_evaluate_t *data, t_selelem *sel, gmx_ana_index_t *g)
                 {
                     isize += sel->u.cgrp.isize;
                     gmx_ana_index_reserve(&sel->u.cgrp, isize);
-                    if (sel->v.type == GROUP_VALUE || (sel->flags & SEL_ATOMVAL))
-                    {
-                        alloc_selection_data(sel->child, isize, FALSE);
-                        alloc_selection_data(sel,        isize, FALSE);
-                    }
-                    rc = sel->cdata->evaluate(data, sel, g);
+                    alloc_selection_data(sel, isize, FALSE);
                 }
-                else
+                rc = sel->cdata->evaluate(data, sel, g);
+                if (isize > 0 && bDoMinMax)
                 {
-                    rc = sel->cdata->evaluate(data, sel, g);
+                    gmx_ana_index_reserve(sel->cdata->gmin,
+                                          sel->cdata->gmin->isize
+                                          + sel->child->cdata->gmin->isize);
+                    gmx_ana_index_reserve(sel->cdata->gmax,
+                                          sel->cdata->gmax->isize
+                                          + sel->child->cdata->gmax->isize);
+                    gmx_ana_index_merge(sel->cdata->gmin, sel->cdata->gmin,
+                                        sel->child->cdata->gmin);
+                    gmx_ana_index_merge(sel->cdata->gmax, sel->cdata->gmax,
+                                        sel->child->cdata->gmax);
                 }
             }
             break;
 
         case SEL_SUBEXPRREF:
-            /* Evaluate the subexpression if it is not yet evaluated.
-             * Can happen when a variable is passed as a parameter or as
-             * a selection. */
-            if (sel->child->u.cgrp.isize == 0)
+            if (!g && !(sel->cdata->flags & SEL_CDATA_SIMPLESUBEXPR))
             {
-                rc = sel->child->evaluate(data, sel->child, g ? g : data->gall);
-                if (rc != 0)
-                {
-                    return rc;
-                }
-                /* Prevent another evaluation of the child. */
-                sel->child->evaluate = NULL;
+                /* The subexpression should have been evaluated if g is NULL
+                 * (i.e., this is a method parameter or a direct value of a
+                 * selection). */
                 alloc_selection_data(sel, sel->child->cdata->gmax->isize, TRUE);
-            }
-            if (!g)
-            {
-                alloc_selection_data(sel, sel->child->cdata->gmax->isize, TRUE);
-            }
-            /* TODO: This is not general enough if/when position references
-             * can be evaluated more than once (that is, if there are position
-             * methods that do not have SMETH_SINGLEVAL or SMETH_VARNUMVAL). */
-            if (sel->v.type == POS_VALUE && !(sel->flags & SEL_OUTINIT))
-            {
-                gmx_ana_pos_copy(sel->v.u.p, sel->child->child->v.u.p, TRUE);
-                sel->flags |= SEL_OUTINIT;
             }
             rc = sel->cdata->evaluate(data, sel, g);
-            sel->child->evaluate = &analyze_static;
             if (rc != 0)
             {
                 return rc;
+            }
+            if ((sel->cdata->flags & SEL_CDATA_SIMPLESUBEXPR)
+                && (sel->child->child->flags & SEL_ALLOCVAL))
+            {
+                _gmx_selvalue_setstore(&sel->v, sel->child->child->v.u.ptr);
             }
             /* Store the parameter value if required */
             store_param_val(sel);
             if (!(sel->flags & SEL_DYNAMIC))
             {
-                if (sel->cdata->bStatic)
+                if (sel->cdata->flags & SEL_CDATA_STATIC)
                 {
                     make_static(sel);
                 }
             }
-            else
+            else if (bDoMinMax)
             {
-                if (sel->child->refcount <= 2 || !g)
+                if ((sel->cdata->flags & SEL_CDATA_SIMPLESUBEXPR) || !g)
                 {
-                    gmx_ana_index_copy(&gmin, sel->child->cdata->gmin, TRUE);
-                    gmx_ana_index_copy(&gmax, sel->child->cdata->gmax, TRUE);
+                    gmx_ana_index_copy(sel->cdata->gmin, sel->child->cdata->gmin, TRUE);
+                    gmx_ana_index_copy(sel->cdata->gmax, sel->child->cdata->gmax, TRUE);
                 }
                 else
                 {
-                    gmx_ana_index_reserve(&gmin, min(g->isize, sel->child->cdata->gmin->isize));
-                    gmx_ana_index_reserve(&gmax, min(g->isize, sel->child->cdata->gmax->isize));
-                    gmx_ana_index_intersection(&gmin, sel->child->cdata->gmin, g);
-                    gmx_ana_index_intersection(&gmax, sel->child->cdata->gmax, g);
+                    gmx_ana_index_reserve(sel->cdata->gmin,
+                                          min(g->isize, sel->child->cdata->gmin->isize));
+                    gmx_ana_index_reserve(sel->cdata->gmax,
+                                          min(g->isize, sel->child->cdata->gmax->isize));
+                    gmx_ana_index_intersection(sel->cdata->gmin,
+                                               sel->child->cdata->gmin, g);
+                    gmx_ana_index_intersection(sel->cdata->gmax,
+                                               sel->child->cdata->gmax, g);
                 }
             }
             break;
@@ -1704,13 +2120,16 @@ analyze_static(gmx_sel_evaluate_t *data, t_selelem *sel, gmx_ana_index_t *g)
     }
 
     /* Update the minimal and maximal evaluation groups */
-    if (sel->cdata->bMinMaxAlloc)
+    if (bDoMinMax)
     {
-        gmx_ana_index_reserve(sel->cdata->gmin, sel->cdata->gmin->isize + gmin.isize);
-        gmx_ana_index_reserve(sel->cdata->gmax, sel->cdata->gmax->isize + gmax.isize);
-        gmx_ana_index_merge(sel->cdata->gmin, sel->cdata->gmin, &gmin);
-        gmx_ana_index_merge(sel->cdata->gmax, sel->cdata->gmax, &gmax);
+        gmx_ana_index_squeeze(sel->cdata->gmin);
+        gmx_ana_index_squeeze(sel->cdata->gmax);
+        sfree(sel->cdata->gmin->name);
+        sfree(sel->cdata->gmax->name);
+        sel->cdata->gmin->name = NULL;
+        sel->cdata->gmax->name = NULL;
     }
+
     /* Replace the result of the evaluation */
     /* This is not necessary for subexpressions or for boolean negations
      * because the evaluation function already has done it properly. */
@@ -1718,101 +2137,7 @@ analyze_static(gmx_sel_evaluate_t *data, t_selelem *sel, gmx_ana_index_t *g)
         && sel->type != SEL_SUBEXPR
         && !(sel->type == SEL_BOOLEAN && sel->u.boolt == BOOL_NOT))
     {
-        if (sel->cdata->bEvalMax)
-        {
-            gmx_ana_index_copy(sel->v.u.g, &gmax, FALSE);
-        }
-        else
-        {
-            gmx_ana_index_copy(sel->v.u.g, &gmin, FALSE);
-        }
-    }
-    gmx_ana_index_deinit(&gmin);
-    gmx_ana_index_deinit(&gmax);
-
-    /* Make sure that enough data storage has been allocated */
-    /* TODO: Constant expressions could be handled here more intelligently */
-    if (sel->type != SEL_ROOT && sel->cdata->bStaticEval)
-    {
-        alloc_selection_data(sel, sel->cdata->gmax->isize, TRUE);
-        /* Make sure that the new value pointer is stored if required */
-        store_param_val(sel);
-    }
-
-    return 0;
-}
-
-/*! \brief
- * Evaluates the static parts of \p sel and analyzes the structure.
- * 
- * \param[in]     data Evaluation data.
- * \param[in,out] sel  Selection currently being evaluated.
- * \param[in]     g   Group for which \p sel should be evaluated.
- * \returns       0 on success, a non-zero error code on error.
- *
- * This function is a simpler version of analyze_static() that is used
- * during a second evaluation round, and can thus use information calculated
- * by analyze_static().
- * It is also used as the replacement for the \c t_selelem::evaluate
- * function pointer.
- * It is used to evaluate the static parts of subexpressions that could not
- * be evaluated during the analyze_static() pass.
- *
- * \see analyze_static()
- */
-static int
-analyze_static2(gmx_sel_evaluate_t *data, t_selelem *sel, gmx_ana_index_t *g)
-{
-    int rc;
-
-    rc = 0;
-    switch (sel->type)
-    {
-        case SEL_CONST:
-            rc = process_const(data, sel, g);
-            break;
-
-        case SEL_EXPRESSION:
-        case SEL_BOOLEAN:
-        case SEL_SUBEXPRREF:
-            if (sel->cdata->bStatic)
-            {
-                rc = sel->cdata->evaluate(data, sel, g);
-                if (rc == 0)
-                {
-                    make_static(sel);
-                }
-            }
-            else if (sel->type == SEL_BOOLEAN)
-            {
-                rc = evaluate_boolean_static_part(data, sel, g);
-                if (rc == 0)
-                {
-                    rc = sel->cdata->evaluate(data, sel, g);
-                }
-            }
-            break;
-
-        case SEL_ROOT:     /* Roots should not be present here */
-        case SEL_MODIFIER: /* Modifiers should not be present here */
-        case SEL_SUBEXPR:
-            rc = sel->cdata->evaluate(data, sel, g);
-            break;
-    }
-    /* Exit if there was some problem */
-    if (rc != 0)
-    {
-        return rc;
-    }
-
-    /* Replace the result of the evaluation */
-    /* This is not necessary for subexpressions or for boolean negations
-     * because the evaluation function already has done it properly. */
-    if (sel->v.type == GROUP_VALUE && !sel->cdata->bStatic
-        && sel->type != SEL_SUBEXPR
-        && !(sel->type == SEL_BOOLEAN && sel->u.boolt == BOOL_NOT))
-    {
-        if (sel->cdata->bEvalMax)
+        if (sel->cdata->flags & SEL_CDATA_EVALMAX)
         {
             gmx_ana_index_copy(sel->v.u.g, sel->cdata->gmax, FALSE);
         }
@@ -1834,18 +2159,14 @@ analyze_static2(gmx_sel_evaluate_t *data, t_selelem *sel, gmx_ana_index_t *g)
  * Initializes a \ref SEL_ROOT element.
  *
  * \param     root Root element to initialize.
- * \returns Pointer to the selection element that should replace \p root.
- *   Can be \p root itself or NULL if the selection should be removed.
+ * \param[in] gall Group of all atoms.
  *
  * Checks whether it is necessary to evaluate anything through the root
  * element, and either clears the evaluation function or initializes the
  * evaluation group.
- *
- * If the function returns NULL, the memory allocated for \p root is 
- * automatically freed.
  */
-static t_selelem *
-init_root_item(t_selelem *root)
+static void
+init_root_item(t_selelem *root, gmx_ana_index_t *gall)
 {
     t_selelem   *expr;
     char        *name;
@@ -1853,17 +2174,9 @@ init_root_item(t_selelem *root)
     /* Process subexpressions */
     if (root->child->type == SEL_SUBEXPR)
     {
-        if (root->child->refcount == 1)
-        {
-            /* Free subexpressions that are no longer used */
-            _gmx_selelem_free(root);
-            return NULL;
-        }
-        else if (root->child->v.type == POS_VALUE)
-        {
-            /* Position values only need to be evaluated once, by the root */
-        }
-        else if (!root->child->cdata->bStaticEval)
+        if (!(root->child->cdata->flags & SEL_CDATA_STATICEVAL)
+            || ((root->child->cdata->flags & SEL_CDATA_SIMPLESUBEXPR)
+                && !(root->child->cdata->flags & SEL_CDATA_FULLEVAL)))
         {
             /* Subexpressions with non-static evaluation group should not be
              * evaluated by the root. */
@@ -1880,21 +2193,50 @@ init_root_item(t_selelem *root)
     if (root->evaluate)
     {
         expr = root->child;
-        if (expr->type == SEL_SUBEXPR)
+        /* Non-atom-valued non-group expressions don't care about the group, so
+         * don't allocate any memory for it. */
+        if ((expr->flags & SEL_VARNUMVAL)
+            || ((expr->flags & SEL_SINGLEVAL) && expr->type != GROUP_VALUE))
         {
-            gmx_ana_index_copy(&root->u.cgrp, expr->cdata->gmax, TRUE);
+            gmx_ana_index_set(&root->u.cgrp, -1, NULL, NULL, 0);
+        }
+        else if (expr->cdata->gmax->isize == gall->isize)
+        {
+            /* Save some memory by only referring to the global group. */
+            gmx_ana_index_set(&root->u.cgrp, gall->isize, gall->index, NULL, 0);
         }
         else
         {
-            /* expr should evaluate the positions for a selection */
-            if (expr->v.u.p->g)
+            gmx_ana_index_copy(&root->u.cgrp, expr->cdata->gmax, TRUE);
+        }
+        /* For selections, store the maximum group for
+         * gmx_ana_selcollection_evaluate_fin() as the value of the root
+         * element (unused otherwise). */
+        if (expr->type != SEL_SUBEXPR && expr->v.u.p->g)
+        {
+            t_selelem *child = expr;
+
+            /* TODO: This code is copied from parsetree.c; it would be better
+             * to have this hardcoded only in one place. */
+            while (child->type == SEL_MODIFIER)
+            {
+                child = child->child;
+                if (child->type == SEL_SUBEXPRREF)
+                {
+                    child = child->child->child;
+                }
+            }
+            if (child->type == SEL_SUBEXPRREF)
+            {
+                child = child->child->child;
+            }
+            if (child->child->flags & SEL_DYNAMIC)
             {
                 _gmx_selelem_set_vtype(root, GROUP_VALUE);
                 root->flags  |= (SEL_ALLOCVAL | SEL_ALLOCDATA);
                 _gmx_selvalue_reserve(&root->v, 1);
                 gmx_ana_index_copy(root->v.u.g, expr->v.u.p->g, TRUE);
             }
-            gmx_ana_index_set(&root->u.cgrp, -1, NULL, NULL, 0);
         }
     }
     else
@@ -1902,77 +2244,6 @@ init_root_item(t_selelem *root)
         gmx_ana_index_clear(&root->u.cgrp);
     }
     root->u.cgrp.name = name;
-    return root;
-}
-
-/*! \brief
- * Reverses the chain of selection elements starting at \p root.
- *
- * \param   root First selection in the whole selection chain.
- * \returns The new first element for the chain.
- */
-static t_selelem *
-reverse_selelem_chain(t_selelem *root)
-{
-    t_selelem *item;
-    t_selelem *prev;
-    t_selelem *next;
-
-    prev = NULL;
-    item = root;
-    while (item)
-    {
-        next = item->next;
-        item->next = prev;
-        prev = item;
-        item = next;
-    }
-    return prev;
-}
-
-/*! \brief
- * Initializes the evaluation groups for \ref SEL_ROOT items.
- *
- * \param   root First selection in the whole selection chain.
- * \returns The new first element for the chain.
- *
- * The function also removes static subexpressions that are no longer used.
- * The elements are processed in reverse order to correctly detect static
- * subexpressions referred to by other static subexpressions. All other
- * processing is independent of the order of the elements.
- */
-static t_selelem *
-process_roots(t_selelem *root)
-{
-    t_selelem *item;
-    t_selelem *next;
-
-    root = reverse_selelem_chain(root);
-    do
-    {
-        next = root->next;
-        root = init_root_item(root);
-        if (!root)
-        {
-            root = next;
-        }
-    }
-    while (root == next);
-    item = root;
-    while (item && item->next)
-    {
-        next = item->next->next;
-        item->next = init_root_item(item->next);
-        if (!item->next)
-        {
-            item->next = next;
-        }
-        else
-        {
-            item = item->next;
-        }
-    }
-    return reverse_selelem_chain(root);
 }
 
 
@@ -1989,45 +2260,73 @@ process_roots(t_selelem *root)
  * referenced once.
  */
 static void
-optimize_item_subexpressions(t_selelem *sel)
+postprocess_item_subexpressions(t_selelem *sel)
 {
-    t_selelem *child;
-
-    /* Call recursively for all children unless the children have already been processed */
+    /* Process children. */
     if (sel->type != SEL_SUBEXPRREF)
     {
+        t_selelem *child;
+
         child = sel->child;
         while (child)
         {
-            optimize_item_subexpressions(child);
+            postprocess_item_subexpressions(child);
             child = child->next;
         }
     }
 
-    /* Optimize the evaluation of subexpressions that are used only once */
-    if (sel->type == SEL_SUBEXPRREF && sel->cdata->bStaticEval && sel->child->refcount == 2)
+    /* Replace the evaluation function of statically evaluated subexpressions
+     * for which the static group was not known in advance. */
+    if (sel->type == SEL_SUBEXPR && sel->refcount > 2
+        && (sel->cdata->flags & SEL_CDATA_STATICEVAL)
+        && !(sel->cdata->flags & SEL_CDATA_FULLEVAL))
     {
-        /* The evaluation functions are not always needed, and they do some
-         * extra work, but it should be neglible compared to other factors
-         * in the evaluation, so set them always for simplicity. */
-        sel->evaluate = &_gmx_sel_evaluate_subexprref_pass;
+        char *name;
+
+        /* We need to free memory allocated for the group, because it is no
+         * longer needed (and would be lost on next call to the evaluation
+         * function). But we need to preserve the name. */
+        name = sel->u.cgrp.name;
+        gmx_ana_index_deinit(&sel->u.cgrp);
+        sel->u.cgrp.name = name;
+
+        sel->evaluate = &_gmx_sel_evaluate_subexpr_staticeval;
         if (sel->cdata)
         {
             sel->cdata->evaluate = sel->evaluate;
         }
-        /* Replace the value of the child */
         _gmx_selelem_free_values(sel->child);
-        sel->child->flags            &= ~(SEL_ALLOCVAL | SEL_ALLOCDATA);
+        sel->child->mempool = NULL;
         _gmx_selvalue_setstore(&sel->child->v, sel->v.u.ptr);
-        sel->child->evaluate = &_gmx_sel_evaluate_subexpr_pass;
-        if (sel->child->cdata)
+        sel->child->flags &= ~(SEL_ALLOCVAL | SEL_ALLOCDATA);
+    }
+
+    /* Adjust memory allocation flags for subexpressions that are used only
+     * once.  This is not strictly necessary, but we do it to have the memory
+     * managed consistently for all types of subexpressions. */
+    if (sel->type == SEL_SUBEXPRREF
+        && (sel->cdata->flags & SEL_CDATA_SIMPLESUBEXPR))
+    {
+        if (sel->child->child->flags & SEL_ALLOCVAL)
         {
-            sel->child->cdata->evaluate = sel->child->evaluate;
+            sel->flags |= SEL_ALLOCVAL;
+            sel->flags |= (sel->child->child->flags & SEL_ALLOCDATA);
+            sel->v.nalloc = sel->child->child->v.nalloc;
+            sel->child->child->flags &= ~(SEL_ALLOCVAL | SEL_ALLOCDATA);
+            sel->child->child->v.nalloc = -1;
         }
-        /* Replace the value of the grandchild */
-        _gmx_selelem_free_values(sel->child->child);
-        sel->child->child->flags     &= ~(SEL_ALLOCVAL | SEL_ALLOCDATA);
-        _gmx_selvalue_setstore(&sel->child->child->v, sel->v.u.ptr);
+    }
+
+    /* Do the same for subexpressions that are evaluated at once for all atoms. */
+    if (sel->type == SEL_SUBEXPR
+        && !(sel->cdata->flags & SEL_CDATA_SIMPLESUBEXPR)
+        && (sel->cdata->flags & SEL_CDATA_FULLEVAL))
+    {
+        sel->flags |= SEL_ALLOCVAL;
+        sel->flags |= (sel->child->flags & SEL_ALLOCDATA);
+        sel->v.nalloc = sel->child->v.nalloc;
+        sel->child->flags &= ~(SEL_ALLOCVAL | SEL_ALLOCDATA);
+        sel->child->v.nalloc = -1;
     }
 }
 
@@ -2070,7 +2369,7 @@ init_item_comg(t_selelem *sel, gmx_ana_poscalc_coll_t *pcc,
             /* Create a default calculation if one does not yet exist */
             int cflags;
             cflags = 0;
-            if (!sel->cdata->bStaticEval)
+            if (!(sel->cdata->flags & SEL_CDATA_STATICEVAL))
             {
                 cflags |= POS_DYNAMIC;
             }
@@ -2231,7 +2530,13 @@ gmx_ana_selcollection_compile(gmx_ana_selcollection_t *sc)
     int          flags;
     int          rc;
 
-    _gmx_sel_evaluate_init(&evaldata, &sc->gall, sc->top, NULL, NULL);
+    rc = _gmx_sel_mempool_create(&sc->mempool);
+    if (rc != 0)
+    {
+        return rc;
+    }
+    _gmx_sel_evaluate_init(&evaldata, sc->mempool, &sc->gall,
+                           sc->top, NULL, NULL);
 
     /* Clear the symbol table because it is not possible to parse anything
      * after compilation, and variable references in the symbol table can
@@ -2239,8 +2544,10 @@ gmx_ana_selcollection_compile(gmx_ana_selcollection_t *sc)
      */
     _gmx_selcollection_clear_symtab(sc);
 
+    /* Remove any unused variables. */
+    sc->root = remove_unused_subexpressions(sc->root);
     /* Extract subexpressions into separate roots */
-    sc->root = extract_subexpressions(sc->root, &sc->gall);
+    sc->root = extract_subexpressions(sc->root);
 
     /* Initialize the evaluation callbacks and process the tree structure
      * to conform to the expectations of the callback functions. */
@@ -2248,18 +2555,41 @@ gmx_ana_selcollection_compile(gmx_ana_selcollection_t *sc)
     item = sc->root;
     while (item)
     {
-        /* Process boolean expressions */
+        /* Process boolean and arithmetic expressions. */
         optimize_boolean_expressions(item);
         reorder_boolean_static_children(item);
-        /* Initialize evaluation */
-        if (!init_item_evaluation(item))
+        if (!optimize_arithmetic_expressions(item))
         {
             /* FIXME: Clean up the collection */
             return -1;
         }
+        /* Initialize evaluation function. */
+        if (!init_item_evalfunc(item))
+        {
+            /* FIXME: Clean up the collection */
+            return -1;
+        }
+        setup_memory_pooling(item, sc->mempool);
         /* Initialize the compiler data */
         init_item_compilerdata(item);
         init_item_staticeval(item);
+        item = item->next;
+    }
+    /* Initialize subexpression flags and evaluation output.
+     * Requires compiler flags for the full tree. */
+    item = sc->root;
+    while (item)
+    {
+        init_item_subexpr_flags(item);
+        init_item_evaloutput(item);
+        item = item->next;
+    }
+    /* Initialize minimum/maximum index groups.
+     * Requires evaluation output for the full tree. */
+    item = sc->root;
+    while (item)
+    {
+        init_item_minmax_groups(item);
         item = item->next;
     }
     /* Initialize the evaluation index groups */
@@ -2270,7 +2600,7 @@ gmx_ana_selcollection_compile(gmx_ana_selcollection_t *sc)
     item = sc->root;
     while (item)
     {
-        if (item->child->type == SEL_SUBEXPR && item->child->refcount > 2)
+        if (item->child->cdata->flags & SEL_CDATA_COMMONSUBEXPR)
         {
             mark_subexpr_dynamic(item->child, TRUE);
         }
@@ -2284,25 +2614,36 @@ gmx_ana_selcollection_compile(gmx_ana_selcollection_t *sc)
         item = item->next;
     }
 
+    /* At this point, static subexpressions no longer have references to them,
+     * so they can be removed. */
+    sc->root = remove_unused_subexpressions(sc->root);
+
     /* Do a second pass to evaluate static parts of common subexpressions */
-    /* Note that the refcount check skips constant subexpressions completely
-     * since they were already evaluated by analyze_static(). */
     item = sc->root;
     while (item)
     {
-        if (item->child->type == SEL_SUBEXPR && item->child->refcount > 2)
+        if (item->child->cdata->flags & SEL_CDATA_COMMONSUBEXPR)
         {
+            bool bMinMax = item->child->cdata->flags & SEL_CDATA_MINMAXALLOC;
+
             mark_subexpr_dynamic(item->child, FALSE);
             item->child->u.cgrp.isize = 0;
-            /* We won't clear item->child->child->v.u.g here, because it may
+            /* We won't clear item->child->v.u.g here, because it may
              * be static, and hence actually point to item->child->cdata->gmax,
              * which is used below. We could also check whether this is the
              * case and only clear the group otherwise, but because the value
              * is actually overwritten immediately in the evaluate call, we
              * won't, because similar problems may arise if gmax handling ever
-             * changes and the check were not updated. */
-            set_evaluation_function(item, &analyze_static2);
+             * changes and the check were not updated.
+             * For the same reason, we clear the min/max flag so that the
+             * evaluation group doesn't get messed up. */
+            set_evaluation_function(item, &analyze_static);
+            item->child->cdata->flags &= ~SEL_CDATA_MINMAXALLOC;
             rc = item->evaluate(&evaldata, item->child, item->child->cdata->gmax);
+            if (bMinMax)
+            {
+                item->child->cdata->flags |= SEL_CDATA_MINMAXALLOC;
+            }
             if (rc != 0)
             {
                 /* FIXME: Clean up the collection */
@@ -2312,11 +2653,13 @@ gmx_ana_selcollection_compile(gmx_ana_selcollection_t *sc)
         item = item->next;
     }
 
-    /* Initialize evaluation groups and remove unused subexpressions. */
-    sc->root = process_roots(sc->root);
+    /* We need a yet another pass of subexpression removal to remove static
+     * subexpressions referred to by common dynamic subexpressions. */
+    sc->root = remove_unused_subexpressions(sc->root);
 
-    /* Initialize position calculations for methods, perform some final
-     * optimization and free the memory allocated for the compilation. */
+    /* Initialize evaluation groups, position calculations for methods, perform
+     * some final optimization, and free the memory allocated for the
+     * compilation. */
     /* By default, use whole residues/molecules. */
     flags = POS_COMPLWHOLE;
     rc = gmx_ana_poscalc_type_from_enum(sc->rpost, &post, &flags);
@@ -2329,7 +2672,8 @@ gmx_ana_selcollection_compile(gmx_ana_selcollection_t *sc)
     item = sc->root;
     while (item)
     {
-        optimize_item_subexpressions(item);
+        init_root_item(item, &sc->gall);
+        postprocess_item_subexpressions(item);
         rc = init_item_comg(item, sc->pcc, post, flags);
         if (rc != 0)
         {
@@ -2338,6 +2682,13 @@ gmx_ana_selcollection_compile(gmx_ana_selcollection_t *sc)
         }
         free_item_compilerdata(item);
         item = item->next;
+    }
+
+    /* Allocate memory for the evaluation memory pool. */
+    rc = _gmx_sel_mempool_reserve(sc->mempool, 0);
+    if (rc != 0)
+    {
+        return rc;
     }
 
     /* Finish up by updating some information */
