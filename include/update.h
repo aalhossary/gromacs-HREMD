@@ -195,7 +195,7 @@ extern void trotter_update(t_inputrec *ir,gmx_ekindata_t *ekind, gmx_enerdata_t 
 			   t_state *state, tensor vir, t_mdatoms *md, 
 			   t_extmass *MassQ, int *trotter_seq);
 
-extern int **init_trotter(t_inputrec *ir, t_state *state, t_extmass *Mass, bool bTrotter); 
+extern int **init_npt_vars(t_inputrec *ir, t_state *state, t_extmass *Mass, bool bTrotter); 
 
 
 extern real NPT_energy(t_inputrec *ir, double *xi, double *vxi, real veta, tensor box, t_extmass *MassQ);
@@ -246,6 +246,7 @@ extern void berendsen_pscale(t_inputrec *ir,matrix mu,
 extern void correct_ekin(FILE *log,int start,int end,rvec v[],
 			 rvec vcm,real mass[],real tmass,tensor ekin);
 /* Correct ekin for vcm */
+
 
 #ifdef __cplusplus
 }

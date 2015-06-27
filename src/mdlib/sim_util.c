@@ -1132,11 +1132,10 @@ void calc_enervirdiff(FILE *fplog,int eDispCorr,t_forcerec *fr)
 }
 
 void calc_dispcorr(FILE *fplog,t_inputrec *ir,t_forcerec *fr,
-                   gmx_large_int_t step, gmx_mtop_t *top_global,matrix box,real lambda,
-                   tensor pres,tensor virial,
+                   gmx_large_int_t step,int natoms,
+                   matrix box,real lambda,tensor pres,tensor virial,
                    real *prescorr, real *enercorr, real *dvdlcorr)
 {
-  static bool bFirst=TRUE;
   bool bCorrAll,bCorrPres;
   real dvdlambda,invvol,dens,ninter,avcsix,avctwelve,enerdiff,svir=0,spres=0;
   int  m;
@@ -1149,32 +1148,31 @@ void calc_dispcorr(FILE *fplog,t_inputrec *ir,t_forcerec *fr,
   clear_mat(pres);
 
   /* first, set average if the variables have changes */
-  
-  if (top_global)
-    set_avcsixtwelve(fplog,fr,top_global);
-  
+
+#if 0
+  {
+      set_avcsixtwelve(fplog,fr,top_global);
+      calc_enervirdiff(fplog,ir->eDispCorr,fr);  
+  }
+#endif
+
   if (ir->eDispCorr != edispcNO) {
       bCorrAll  = (ir->eDispCorr == edispcAllEner ||
                    ir->eDispCorr == edispcAllEnerPres);
       bCorrPres = (ir->eDispCorr == edispcEnerPres ||
                    ir->eDispCorr == edispcAllEnerPres);
-      
-      if (bFirst) 
-      {
-          calc_enervirdiff(fplog,ir->eDispCorr,fr);
-      }
 
       invvol = 1/det(box);
       if (fr->n_tpi) 
       {
           /* Only correct for the interactions with the inserted molecule */
-          dens = (top_global->natoms - fr->n_tpi)*invvol;
+          dens = (natoms - fr->n_tpi)*invvol;
           ninter = fr->n_tpi;
       } 
       else 
       {
-          dens = top_global->natoms*invvol;
-          ninter = 0.5*top_global->natoms;
+          dens = natoms*invvol;
+          ninter = 0.5*natoms;
       }
 
     if (ir->efep == efepNO) 
@@ -1222,34 +1220,28 @@ void calc_dispcorr(FILE *fplog,t_inputrec *ir,t_forcerec *fr,
         *prescorr += spres;
     }
 
-    /* only print the first time */
-    if (bFirst && fplog) {
+    /* Can't currently control when it prints, for now, just print when degugging */
+    if (debug)
+    {
         if (bCorrAll) {
-            fprintf(fplog,"Long Range LJ corr.: <C6> %10.4e, <C12> %10.4e\n",
+            fprintf(debug,"Long Range LJ corr.: <C6> %10.4e, <C12> %10.4e\n",
                     avcsix,avctwelve);
-        }
-        else
-        {
-            fprintf(fplog,"Long Range LJ corr.: <C6> %10.4e\n",avcsix);
         }
         if (bCorrPres) 
         {
-            fprintf(fplog,
+            fprintf(debug,
                     "Long Range LJ corr.: Epot %10g, Pres: %10g, Vir: %10g\n",
                     *enercorr,spres,svir);
         }
         else
         {
-            fprintf(fplog,"Long Range LJ corr.: Epot %10g\n",*enercorr);
+            fprintf(debug,"Long Range LJ corr.: Epot %10g\n",*enercorr);
         }
-        bFirst = FALSE;
     }
-    /* This output is not really necessary, and requires the step, 
-       which it really shouldn't.  To simplify the calls, I'm dropping 
-       this out. */
-    /*if (fr->bSepDVDL && do_per_step(step,ir->nstlog))
-       fprintf(fplog,sepdvdlformat,"Dispersion correction",
-       *enercorr,dvdlambda);*/
+
+    if (fr->bSepDVDL && do_per_step(step,ir->nstlog))
+        fprintf(fplog,sepdvdlformat,"Dispersion correction",
+                *enercorr,dvdlambda);
     
     if (fr->efep != efepNO) 
     {
@@ -1426,7 +1418,7 @@ void init_md(FILE *fplog,
              FILE **fp_dhdl,FILE **fp_field,
              t_mdebin **mdebin,
              tensor force_vir,tensor shake_vir,rvec mu_tot,
-             bool *bNEMD,bool *bSimAnn,t_vcm **vcm, unsigned long Flags)
+             bool *bNEMD,bool *bSimAnn,t_vcm **vcm, t_state *state, unsigned long Flags)
 {
     int  i,j,n;
     real tmpt,mod;

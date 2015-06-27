@@ -615,7 +615,7 @@ static void evaluate_energy(FILE *fplog,bool bVerbose,t_commrec *cr,
   bool bNS;
   int  nabnsb;
   tensor force_vir,shake_vir,ekin;
-  real dvdl,prescorr,enercorr,dvdlcorr;;
+  real dvdl,prescorr,enercorr,dvdlcorr;
   real terminate=0;
   
   /* Set the time to the initial time, the time does not change during EM */
@@ -668,7 +668,7 @@ static void evaluate_energy(FILE *fplog,bool bVerbose,t_commrec *cr,
   clear_mat(pres);
 
   /* Calculate long range corrections to pressure and energy */
-  calc_dispcorr(fplog,inputrec,fr,count,top_global,ems->s.box,ems->s.lambda,
+  calc_dispcorr(fplog,inputrec,fr,count,top_global->natoms,ems->s.box,ems->s.lambda,
                 pres,force_vir,&prescorr,&enercorr,&dvdlcorr);
   /* don't think these next 4 lines  can be moved in for now, because we 
      don't always want to write it -- figure out how to clean this up MRS 8/4/2009 */
@@ -2494,7 +2494,7 @@ double do_tpi(FILE *fplog,t_commrec *cr,
   real   *mass_cavity=NULL,mass_tot;
   int    nbin;
   double invbinw,*bin,refvolshift,logV,bUlogV;
-  real dvdl,prescorr,enercorr,dvdlcorr;;
+  real dvdl,prescorr,enercorr,dvdlcorr;
   const char *tpid_leg[2]={"direct","reweighted"};
 
   /* Since numerical problems can lead to extreme negative energies
@@ -2912,7 +2912,7 @@ double do_tpi(FILE *fplog,t_commrec *cr,
                 bNS = FALSE;
                 
                 /* Calculate long range corrections to pressure and energy */
-                calc_dispcorr(fplog,inputrec,fr,step,top_global,rerun_fr.box,
+                calc_dispcorr(fplog,inputrec,fr,step,top_global->natoms,rerun_fr.box,
                               lambda,pres,vir,&prescorr,&enercorr,&dvdlcorr);
                 /* figure out how to rearrange the next 4 lines MRS 8/4/2009 */
                 enerd->term[F_DISPCORR] = enercorr;
