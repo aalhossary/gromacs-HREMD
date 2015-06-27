@@ -1243,6 +1243,17 @@ void update_extended(FILE         *fplog,
     }
 }
 
+static rvec *get_xprime(const t_state *state,gmx_update_t upd)
+{
+    if (state->nalloc > upd->xp_nalloc)
+    {
+        upd->xp_nalloc = state->nalloc;
+        srenew(upd->xp,upd->xp_nalloc);
+    }
+ 
+    return upd->xp;
+}
+
 void update_constraints(FILE         *fplog,
                         gmx_large_int_t   step,
                         real         *dvdlambda,    /* FEP stuff */
@@ -1301,7 +1312,8 @@ void update_constraints(FILE         *fplog,
         /* clear out constraints before applying */
         clear_mat(vir_part);
 
-        xprime = upd->xp;
+        xprime = get_xprime(state,upd);
+
         bLastStep = (step == inputrec->init_step+inputrec->nsteps);
         bLog  = (do_per_step(step,inputrec->nstlog) || bLastStep || (step < 0));
         bEner = (do_per_step(step,inputrec->nstenergy) || bLastStep);
@@ -1362,6 +1374,8 @@ void update_constraints(FILE         *fplog,
     where();
     if ((inputrec->eI == eiSD2) && !(bFirstHalf))
     {
+        xprime = get_xprime(state,upd);
+
         /* The second part of the SD integration */
         do_update_sd2(upd->sd,FALSE,start,homenr,
                       inputrec->opts.acc,inputrec->opts.nFreeze,
@@ -1519,7 +1533,6 @@ o               If we assume isotropic scaling, and box length scaling
         deform(upd,start,homenr,state->x,state->box,scale_tot,inputrec,step);
     }
     where();
-    inc_nrnb(nrnb, bExtended ? eNR_EXTUPDATE : eNR_UPDATE, homenr);
     dump_it_all(fplog,"After update",
                 state->natoms,state->x,upd->xp,state->v,force);
 }
@@ -1566,12 +1579,7 @@ void update_coords(FILE         *fplog,
     homenr = md->homenr;
     nrend = start+homenr;
     
-    if (state->nalloc > upd->xp_nalloc)
-    {
-        upd->xp_nalloc = state->nalloc;
-        srenew(upd->xp,upd->xp_nalloc);
-    }
-    xprime = upd->xp;
+    xprime = get_xprime(state,upd);
     
     dt   = inputrec->delta_t;
     dt_1 = 1.0/dt;

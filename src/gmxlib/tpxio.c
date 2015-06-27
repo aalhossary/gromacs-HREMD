@@ -1,4 +1,5 @@
-/*
+/* -*- mode: c; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4; c-file-style: "stroustrup"; -*-
+ *
  * 
  *                This source code is part of
  * 
@@ -675,9 +676,9 @@ static void do_inputrec(t_inputrec *ir,bool bRead, int file_version,
     /* grpopts stuff */
     do_int(ir->opts.ngtc); 
     if (file_version >= 69) {
-      do_int(ir->opts.nnhchains);
+      do_int(ir->opts.nhchainlength);
     } else {
-      ir->opts.nnhchains = 0;
+      ir->opts.nhchainlength = 1;
     }
     do_int(ir->opts.ngacc); 
     do_int(ir->opts.ngfrz); 
@@ -1782,13 +1783,13 @@ static void do_mtop(gmx_mtop_t *mtop,bool bRead, int file_version)
 	
   if(file_version >= 65)
   {
-	  do_cmap(&mtop->cmap_grid,bRead);
+      do_cmap(&mtop->ffparams.cmap_grid,bRead);
   }
   else
   {
-	  mtop->cmap_grid.ngrid=0;
-	  mtop->cmap_grid.grid_spacing=0.1;
-	  mtop->cmap_grid.cmapdata=NULL;
+      mtop->ffparams.cmap_grid.ngrid        = 0;
+      mtop->ffparams.cmap_grid.grid_spacing = 0.1;
+      mtop->ffparams.cmap_grid.cmapdata     = NULL;
   }
 	  
   if (file_version >= 57) {
@@ -1958,13 +1959,13 @@ static int do_tpx(int fp,bool bRead,
     if (bXVallocated) {
       xptr = state->x;
       vptr = state->v;
-      init_state(state,0,tpx.ngtc,0);  /* nose-hoover chains */
+      init_state(state,0,tpx.ngtc,0,0);  /* nose-hoover chains */ /* eventually, need to add nnhpres here? */
       state->natoms = tpx.natoms; 
       state->nalloc = tpx.natoms; 
       state->x = xptr;
       state->v = vptr;
     } else {
-      init_state(state,tpx.natoms,tpx.ngtc,0);  /* nose-hoover chains */
+      init_state(state,tpx.natoms,tpx.ngtc,0,0);  /* nose-hoover chains */
     }
   }
 
@@ -2099,42 +2100,60 @@ static int do_tpx(int fp,bool bRead,
     }
   }
 
-  if (bRead && tpx.bIr && ir) {
-    if (state->ngtc == 0) {
-      /* Reading old version without tcoupl state data: set it */
-      init_gtc_state(state,ir->opts.ngtc,ir->opts.nnhchains);
-    }
-    if (tpx.bTop && mtop) {
-      if (file_version < 57) {
-	if (mtop->moltype[0].ilist[F_DISRES].nr > 0) {
-	  ir->eDisre = edrSimple;
-	} else {
-	  ir->eDisre = edrNone;
-	}
-      }
-      set_disres_npair(mtop);
-      gmx_mtop_finalize(mtop);
-    }
-  }
+    if (bRead)
+    {
+        if (tpx.bIr && ir)
+        {
+            if (state->ngtc == 0)
+            {
+                /* Reading old version without tcoupl state data: set it */
+                init_gtc_state(state,ir->opts.ngtc,0,ir->opts.nhchainlength);
+            }
+            if (tpx.bTop && mtop)
+            {
+                if (file_version < 57)
+                {
+                    if (mtop->moltype[0].ilist[F_DISRES].nr > 0)
+                    {
+                        ir->eDisre = edrSimple;
+                    }
+                    else
+                    {
+                        ir->eDisre = edrNone;
+                    }
+                }
+                set_disres_npair(mtop);
+            }
+        }
 
-  if (bRead && file_version >= 57) {
-    char *env;
-    int  ienv;
-    env = getenv("GMX_NOCHARGEGROUPS");
-    if (env != NULL) {
-      sscanf(env,"%d",&ienv);
-      fprintf(stderr,"\nFound env.var. GMX_NOCHARGEGROUPS = %d\n",ienv);
-      if (ienv > 0) {
-	fprintf(stderr,
-		"Will make single atomic charge groups in non-solvent%s\n",
-	       ienv > 1 ? " and solvent" : "");
-	gmx_mtop_make_atomic_charge_groups(mtop,ienv==1);
-      }
-      fprintf(stderr,"\n");
-    }
-  }
+        if (tpx.bTop && mtop)
+        {
+            gmx_mtop_finalize(mtop);
+        }
 
-  return ePBC;
+        if (file_version >= 57)
+        {
+            char *env;
+            int  ienv;
+            env = getenv("GMX_NOCHARGEGROUPS");
+            if (env != NULL)
+            {
+                sscanf(env,"%d",&ienv);
+                fprintf(stderr,"\nFound env.var. GMX_NOCHARGEGROUPS = %d\n",
+                        ienv);
+                if (ienv > 0)
+                {
+                    fprintf(stderr,
+                            "Will make single atomic charge groups in non-solvent%s\n",
+                            ienv > 1 ? " and solvent" : "");
+                    gmx_mtop_make_atomic_charge_groups(mtop,ienv==1);
+                }
+                fprintf(stderr,"\n");
+            }
+        }
+    }
+
+    return ePBC;
 }
 
 /************************************************************

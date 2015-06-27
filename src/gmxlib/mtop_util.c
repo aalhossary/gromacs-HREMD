@@ -26,6 +26,7 @@
 #include "mtop_util.h"
 #include "topsort.h"
 #include "symtab.h"
+#include "gmx_fatal.h"
 
 static int gmx_mtop_maxresnr(const gmx_mtop_t *mtop,int maxres_renum)
 {
@@ -62,6 +63,11 @@ void gmx_mtop_finalize(gmx_mtop_t *mtop)
     if (env != NULL)
     {
         sscanf(env,"%d",&mtop->maxres_renum);
+    }
+    if (mtop->maxres_renum == -1)
+    {
+        /* -1 signals renumber residues in all molecules */
+        mtop->maxres_renum = INT_MAX;
     }
 
     mtop->maxresnr = gmx_mtop_maxresnr(mtop,mtop->maxres_renum);
@@ -576,8 +582,11 @@ static void atomcat(t_atoms *dest, t_atoms *src, int copies,
         /* Single residue molecule, continue counting residues */
         for (j=0; (j<copies); j++)
         {
-            (*maxresnr)++;
-            dest->resinfo[dest->nres+j].nr = *maxresnr;
+            for (l=0; l<src->nres; l++)
+            {
+                (*maxresnr)++;
+                dest->resinfo[dest->nres+j*src->nres+l].nr = *maxresnr;
+            }
         }
     }
     
@@ -783,6 +792,7 @@ static void gen_local_top(const gmx_mtop_t *mtop,const t_inputrec *ir,
     idef->iparams_posres = NULL;
     idef->iparams_posres_nalloc = 0;
     idef->fudgeQQ  = ffp->fudgeQQ;
+    idef->cmap_grid = ffp->cmap_grid;
     idef->ilsort   = ilsortUNKNOWN;
 
     init_block(&top->cgs);
@@ -884,10 +894,6 @@ t_topology gmx_mtop_t_to_t_topology(gmx_mtop_t *mtop)
 
     gen_local_top(mtop,NULL,FALSE,&ltop);
 
-    open_symtab(&top.symtab);
-
-    open_symtab(&top.symtab);
-
     top.name      = mtop->name;
     top.idef      = ltop.idef;
     top.atomtypes = ltop.atomtypes;
@@ -895,9 +901,13 @@ t_topology gmx_mtop_t_to_t_topology(gmx_mtop_t *mtop)
     top.excls     = ltop.excls;
     top.atoms     = gmx_mtop_global_atoms(mtop);
     top.mols      = mtop->mols;
+    top.symtab    = mtop->symtab;
 
     /* We only need to free the moltype and molblock data,
      * all other pointers have been copied to top.
+     *
+     * Well, except for the group data, but we can't free those, because they
+     * are used somewhere even after a call to this function.
      */
     for(mt=0; mt<mtop->nmoltype; mt++)
     {

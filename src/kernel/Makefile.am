@@ -6,15 +6,27 @@ AM_CPPFLAGS = -I$(top_srcdir)/include -DGMXLIBDIR=\"$(datadir)/top\"
 
 lib_LTLIBRARIES  = libgmxpreprocess@LIBSUFFIX@.la 
 
+pkgconfigdir = ${libdir}/pkgconfig
+pkgconfig_DATA = libgmxpreprocess@LIBSUFFIX@.pc
+
 LDADD = $(lib_LTLIBRARIES) ../mdlib/libmd@LIBSUFFIX@.la ../gmxlib/libgmx@LIBSUFFIX@.la 
 
-libgmxpreprocess@LIBSUFFIX@_la_LIBADD       =
+if USE_OPENMM
+#AM_CPPFLAGS += -I$(top_srcdir)/libraries/openmm/include
+#LDADD += $(top_srcdir)/libraries/openmm/lib/linux64/libOpenMM.*
+lib_LTLIBRARIES += libopenmminterface.la
+libopenmminterface_la_SOURCES = md_openmm.cpp
+#mdrun_LINK = $(CXXLINK)
+endif
+
+libgmxpreprocess@LIBSUFFIX@_la_LIBADD       = ../mdlib/libmd@LIBSUFFIX@.la
 libgmxpreprocess@LIBSUFFIX@_la_DEPENDENCIES =
 
 libgmxpreprocess@LIBSUFFIX@_la_SOURCES = \
 add_par.c	add_par.h	\
 compute_io.c	compute_io.h	\
 convparm.c 	convparm.h	\
+fflibutil.c	fflibutil.h	\
 gen_ad.c 	\
 gen_vsite.c	gen_vsite.h	\
 genhydro.c	genhydro.h	\

@@ -1599,7 +1599,8 @@ int cmap_setup_grid_index(int ip, int grid_spacing, int *ipm1, int *ipp1, int *i
 }
 
 real cmap_dihs(int nbonds,
-			   const t_iatom forceatoms[],const t_iparams forceparams[],gmx_cmap_t *cmap_grid,
+			   const t_iatom forceatoms[],const t_iparams forceparams[],
+               const gmx_cmap_t *cmap_grid,
 			   const rvec x[],rvec f[],rvec fshift[],
 			   const t_pbc *pbc,const t_graph *g,
 			   real lambda,real *dvdlambda,
@@ -1635,6 +1636,8 @@ real cmap_dihs(int nbonds,
 	rvec dtf1,dtg1,dth1,dtf2,dtg2,dth2;
 	ivec jt1,dt1_ij,dt1_kj,dt1_lj;
 	ivec jt2,dt2_ij,dt2_kj,dt2_lj;
+
+    const real *cmapd;
 	
 	int loop_index[4][4] = {
 		{0,4,8,12},
@@ -1658,6 +1661,7 @@ real cmap_dihs(int nbonds,
 		
 		/* Which CMAP type is this */
 		cmapA = forceparams[type].cmap.cmapA;
+        cmapd = cmap_grid->cmapdata[cmapA].cmap;
 		
 		/* First torsion */
 		a1i   = ai;
@@ -1815,25 +1819,25 @@ real cmap_dihs(int nbonds,
 		pos3    = ip1p1*cmap_grid->grid_spacing+ip2p1;
 		pos4    = iphi1*cmap_grid->grid_spacing+ip2p1;
 		
-		ty[0]   = cmap_grid->cmapdata[cmapA].cmap[pos1*4];
-		ty[1]   = cmap_grid->cmapdata[cmapA].cmap[pos2*4];
-		ty[2]   = cmap_grid->cmapdata[cmapA].cmap[pos3*4];
-		ty[3]   = cmap_grid->cmapdata[cmapA].cmap[pos4*4];
+		ty[0]   = cmapd[pos1*4];
+		ty[1]   = cmapd[pos2*4];
+		ty[2]   = cmapd[pos3*4];
+		ty[3]   = cmapd[pos4*4];
 		
-		ty1[0]   = cmap_grid->cmapdata[cmapA].cmap[pos1*4+1];
-		ty1[1]   = cmap_grid->cmapdata[cmapA].cmap[pos2*4+1];
-		ty1[2]   = cmap_grid->cmapdata[cmapA].cmap[pos3*4+1];
-		ty1[3]   = cmap_grid->cmapdata[cmapA].cmap[pos4*4+1];
+		ty1[0]   = cmapd[pos1*4+1];
+		ty1[1]   = cmapd[pos2*4+1];
+		ty1[2]   = cmapd[pos3*4+1];
+		ty1[3]   = cmapd[pos4*4+1];
 		
-		ty2[0]   = cmap_grid->cmapdata[cmapA].cmap[pos1*4+2];
-		ty2[1]   = cmap_grid->cmapdata[cmapA].cmap[pos2*4+2];
-		ty2[2]   = cmap_grid->cmapdata[cmapA].cmap[pos3*4+2];
-		ty2[3]   = cmap_grid->cmapdata[cmapA].cmap[pos4*4+2];
+		ty2[0]   = cmapd[pos1*4+2];
+		ty2[1]   = cmapd[pos2*4+2];
+		ty2[2]   = cmapd[pos3*4+2];
+		ty2[3]   = cmapd[pos4*4+2];
 		
-		ty12[0]   = cmap_grid->cmapdata[cmapA].cmap[pos1*4+3];
-		ty12[1]   = cmap_grid->cmapdata[cmapA].cmap[pos2*4+3];
-		ty12[2]   = cmap_grid->cmapdata[cmapA].cmap[pos3*4+3];
-		ty12[3]   = cmap_grid->cmapdata[cmapA].cmap[pos4*4+3];
+		ty12[0]   = cmapd[pos1*4+3];
+		ty12[1]   = cmapd[pos2*4+3];
+		ty12[2]   = cmapd[pos3*4+3];
+		ty12[3]   = cmapd[pos4*4+3];
 		
 		/* Switch to degrees */
 		dx = 15;
@@ -2546,7 +2550,7 @@ void calc_bonds(FILE *fplog,const gmx_multisim_t *ms,
 		real lambda,
 		const t_mdatoms *md,
 		t_fcdata *fcd,int *global_atom_index,
-		t_atomtypes *atype, gmx_genborn_t *born,gmx_cmap_t *cmap_grid,
+		t_atomtypes *atype, gmx_genborn_t *born,
 		bool bPrintSepPot,gmx_large_int_t step)
 {
   int    ftype,nbonds,ind,nat1;
@@ -2598,7 +2602,7 @@ void calc_bonds(FILE *fplog,const gmx_multisim_t *ms,
 		if(ftype==F_CMAP)
 		{
 			v = cmap_dihs(nbonds,idef->il[ftype].iatoms,
-						  idef->iparams,cmap_grid,
+						  idef->iparams,&idef->cmap_grid,
 						  (const rvec*)x,f,fr->fshift,
 						  pbc_null,g,lambda,&dvdl,md,fcd,
 						  global_atom_index);
@@ -2653,7 +2657,7 @@ void calc_bonds_lambda(FILE *fplog,
 		       const t_mdatoms *md,
 		       t_fcdata *fcd,int *global_atom_index)
 {
-  int    ftype,nbonds_np,nbonds,ind,nat1;
+    int    ftype,nbonds_np,nbonds,ind, nat1;
   real   *epot,v,dvdl;
   rvec   *f,*fshift_orig;
   const  t_pbc *pbc_null;
@@ -2673,37 +2677,39 @@ void calc_bonds_lambda(FILE *fplog,
 
   /* Loop over all bonded force types to calculate the bonded forces */
   for(ftype=0; (ftype<F_NRE); ftype++) {
-    if(ftype<F_GB12 || ftype>F_GB14) {
-      if (interaction_function[ftype].flags & IF_BOND &&
-	  !(ftype == F_CONNBONDS || ftype == F_POSRES)) {
-	nbonds_np = idef->il[ftype].nr_nonperturbed;
-	nbonds    = idef->il[ftype].nr - nbonds_np;
-	if (nbonds > 0) {
-	  ind  = interaction_function[ftype].nrnb_ind;
-	  nat1 = interaction_function[ftype].nratoms + 1;
-	  iatom_fe = idef->il[ftype].iatoms + nbonds_np*nat1;
-	  dvdl = 0;
-	  if (ftype < F_LJ14 || ftype > F_LJC_PAIRS_NB) {
-	    v =
-	      interaction_function[ftype].ifunc(nbonds,iatom_fe,
-						idef->iparams,
-						(const rvec*)x,f,fr->fshift,
-						pbc_null,g,lambda,&dvdl,md,fcd,
-						global_atom_index);
-	  } else {
-	    v = do_listed_vdw_q(ftype,nbonds,iatom_fe,
-				idef->iparams,
-				(const rvec*)x,f,fr->fshift,
-				pbc_null,g,
-				lambda,&dvdl,
-				md,fr,&enerd->grpp,global_atom_index);
-	  }
-	  if (ind != -1)
-	    inc_nrnb(nrnb,ind,nbonds/nat1);
-	  epot[ftype] += v;
-	}
+      if(ftype<F_GB12 || ftype>F_GB14) {
+          
+          if (interaction_function[ftype].flags & IF_BOND &&
+              !(ftype == F_CONNBONDS || ftype == F_POSRES)) 
+          {
+              nbonds_np = idef->il[ftype].nr_nonperturbed;
+              nbonds    = idef->il[ftype].nr - nbonds_np;
+              nat1 = interaction_function[ftype].nratoms + 1;
+              if (nbonds > 0) {
+                  ind  = interaction_function[ftype].nrnb_ind;
+                  iatom_fe = idef->il[ftype].iatoms + nbonds_np;
+                  dvdl = 0;
+                  if (ftype < F_LJ14 || ftype > F_LJC_PAIRS_NB) {
+                      v =
+                          interaction_function[ftype].ifunc(nbonds,iatom_fe,
+                                                            idef->iparams,
+                                                            (const rvec*)x,f,fr->fshift,
+                                                            pbc_null,g,lambda,&dvdl,md,fcd,
+                                                            global_atom_index);
+                  } else {
+                      v = do_listed_vdw_q(ftype,nbonds,iatom_fe,
+                                          idef->iparams,
+                                          (const rvec*)x,f,fr->fshift,
+                                          pbc_null,g,
+                                          lambda,&dvdl,
+                                          md,fr,&enerd->grpp,global_atom_index);
+                  }
+                  if (ind != -1)
+                      inc_nrnb(nrnb,ind,nbonds/nat1);
+                  epot[ftype] += v;
+              }
+          }
       }
-    }
   }
 
   sfree(fr->fshift);

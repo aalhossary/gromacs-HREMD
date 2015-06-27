@@ -112,9 +112,9 @@ const t_interaction_function interaction_function[F_NRE]=
   def_bonded  ("PIDIHS",   "Improper Dih.",   4, 3, 3,  eNR_PROPER, pdihs         ),
   def_bondedt ("TABDIHS", "Tab. Dih.",        4, 2, 2,  eNR_TABDIHS, tab_dihs     ),
   def_bonded  ("CMAP",  "CMAP Dih.",          5, -1, -1,  eNR_CMAP,   unimplemented ),
-  def_bonded  ("GB12",  "Generalized Born 1,2", 2, 2, 2,  eNR_GB,     unimplemented ),
-  def_bonded  ("GB13",  "Generalized Born 1,3", 2, 2, 2,  eNR_GB,     unimplemented ),
-  def_bonded  ("GB14",  "Generalized Born 1,4", 2, 2, 2,  eNR_GB,     unimplemented ),
+  def_bonded  ("GB12",     "GB 1-2",          2, 2, 2,  eNR_GB,     unimplemented ),
+  def_bonded  ("GB13",     "GB 1-3",          2, 2, 2,  eNR_GB,     unimplemented ),
+  def_bonded  ("GB14",     "GB 1-4",          2, 2, 2,  eNR_GB,     unimplemented ),
   def_bondedz ("LJ14",     "LJ-14",           2, 2, 2,  eNR_NB14,   unimplemented ),
   def_nofc    ("COUL14",   "Coulomb-14"                                           ),
   def_bondedz ("LJC14_Q",  "LJC-14 q",        2, 5, 0,  eNR_NB14,   unimplemented ),
@@ -159,9 +159,12 @@ const t_interaction_function interaction_function[F_NRE]=
   def_nofc    ("ETOT",     "Total Energy"     ),
   def_nofc    ("ECONS",    "Conserved En."    ),
   def_nofc    ("TEMP",     "Temperature"      ),
-  def_nofc    ("VTEMP",    "Vir. Temperature" ),
+  def_nofc    ("VTEMP",    "Vir. Temp."       ),
+  /* Note that pressure names can not be more than 8 char's,
+   * because " (bar)" is appended to them.
+   */
+  def_nofc    ("PDISPCORR","Pres. DC"         ),  
   def_nofc    ("PRES",     "Pressure"         ),
-  def_nofc    ("PDISPCORR","Pres. DC"         ),
   def_nofc    ("DV/DL",    "dVpot/dlambda"    ),
   def_nofc    ("DK/DL",    "dEkin/dlambda"    ),
   def_nofc    ("DH/DL_CON","dH/dl constr."    )
