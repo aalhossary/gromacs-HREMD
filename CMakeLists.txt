@@ -98,7 +98,7 @@ option(GMX_X86_64_ASM "Add SSE assembly files for X86_64" OFF)
 option(USE_VERSION_H "Generate development version string/information" ON)
 
 option(GMX_DEFAULT_SUFFIX "Use default GROMACS suffixes" ON)
-set(GMX_BINARY_SUFFIX "" CACHE STRING "Suffix for GROMACS binaries (default: _d for doubule).")
+set(GMX_BINARY_SUFFIX "" CACHE STRING "Suffix for GROMACS binaries (default: _d for double).")
 set(GMX_LIBS_SUFFIX "" 
   CACHE STRING "Suffix for GROMACS libs (default: _d for double, _mpi for mpi, _mpi_d for mpi and double).")
 if (GMX_DEFAULT_SUFFIX)
@@ -306,11 +306,14 @@ if(LIBXML2_FOUND)
     set(HAVE_LIBXML2 1)
 endif(LIBXML2_FOUND)
 
-find_package(X11)
-# X11 includes/libraries are only set in the ngmx subdirectory!
-if(X11_FOUND)
-    set(HAVE_X11 1)
-endif(X11_FOUND)
+option(GMX_X11 "Use X window system" OFF)
+if (GMX_X11)
+	find_package(X11)
+	# X11 includes/libraries are only set in the ngmx subdirectory!
+	if(X11_FOUND)
+    	set(HAVE_X11 1)
+	endif(X11_FOUND)
+endif(GMX_X11)
 
 if(GMX_THREADS)
     set(PKG_CFLAGS "${PKG_CFLAGS} -DGMX_THREADS")
