@@ -35,9 +35,6 @@
 #ifndef _state_h_
 #define _state_h_
 
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
 
 #include "simple.h"
 
@@ -89,7 +86,7 @@ typedef struct
  */
 typedef struct
 {
-  bool     bUpToDate;
+  gmx_bool     bUpToDate;
   int      ekin_n;
   tensor  *ekinh;
   tensor  *ekinf;
@@ -109,7 +106,8 @@ typedef struct
     int  *ndh;          /* the number in each energy difference list */
     real **dh;          /* the energy difference lists */
 
-    real starttime;     /* the start time of these energy diff blocks */
+    double start_time;     /* the start time of these energy diff blocks */
+    double start_lambda;   /* lambda at start time */
 } delta_h_history_t; 
 
 typedef struct

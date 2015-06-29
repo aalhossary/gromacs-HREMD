@@ -95,7 +95,7 @@ static void cmp_uc(FILE *fp,const char *s,int index,unsigned char i1,unsigned ch
   }
 }
 
-static bool cmp_bool(FILE *fp, const char *s, int index, bool b1, bool b2)
+static gmx_bool cmp_bool(FILE *fp, const char *s, int index, gmx_bool b1, gmx_bool b2)
 {
   if (b1) {
     b1 = 1;
@@ -129,17 +129,17 @@ static void cmp_str(FILE *fp, const char *s, int index,
   }
 }
 
-static bool equal_real(real i1,real i2,real ftol,real abstol)
+static gmx_bool equal_real(real i1,real i2,real ftol,real abstol)
 {
     return ( ( 2*fabs(i1 - i2) <= (fabs(i1) + fabs(i2))*ftol ) || fabs(i1-i2)<=abstol );
 }
 
-static bool equal_float(float i1,float i2,float ftol,float abstol)
+static gmx_bool equal_float(float i1,float i2,float ftol,float abstol)
 {
     return ( ( 2*fabs(i1 - i2) <= (fabs(i1) + fabs(i2))*ftol ) || fabs(i1-i2)<=abstol );
 }
 
-static bool equal_double(double i1,double i2,real ftol,real abstol)
+static gmx_bool equal_double(double i1,double i2,real ftol,real abstol)
 {
     return ( ( 2*fabs(i1 - i2) <= (fabs(i1) + fabs(i2))*ftol ) || fabs(i1-i2)<=abstol );
 }
@@ -229,7 +229,7 @@ void cmp_iparm(FILE *fp,const char *s,t_functype ft,
 	       t_iparams ip1,t_iparams ip2,real ftol,real abstol) 
 {
   int i;
-  bool bDiff;
+  gmx_bool bDiff;
   
   bDiff=FALSE;
   for(i=0; i<MAXFORCEPARAM && !bDiff; i++)
@@ -245,7 +245,7 @@ void cmp_iparm(FILE *fp,const char *s,t_functype ft,
 void cmp_iparm_AB(FILE *fp,const char *s,t_functype ft,t_iparams ip1,real ftol,real abstol) 
 {
   int nrfpA,nrfpB,p0,i;
-  bool bDiff;
+  gmx_bool bDiff;
   
   /* Normally the first parameter is perturbable */
   p0 = 0;
@@ -370,8 +370,40 @@ static void cmp_top(FILE *fp,t_topology *t1,t_topology *t2,real ftol, real absto
   }
 }
 
+static void cmp_groups(FILE *fp,gmx_groups_t *g0,gmx_groups_t *g1,
+		       int natoms0,int natoms1)
+{
+  int  i,j,ndiff;
+  char buf[32];
+
+  fprintf(fp,"comparing groups\n");
+
+  for(i=0; i<egcNR; i++) {
+    sprintf(buf,"grps[%d].nr",i);
+    cmp_int(fp,buf,-1,g0->grps[i].nr,g1->grps[i].nr);
+    if (g0->grps[i].nr == g1->grps[i].nr) {
+      for(j=0; j<g0->grps[i].nr; j++) {
+          sprintf(buf,"grps[%d].name[%d]",i,j);
+          cmp_str(fp,buf,-1,
+                  *g0->grpname[g0->grps[i].nm_ind[j]],
+                  *g1->grpname[g1->grps[i].nm_ind[j]]);
+      }
+    }
+    cmp_int(fp,"ngrpnr",i,g0->ngrpnr[i],g1->ngrpnr[i]);
+    if (g0->ngrpnr[i] == g1->ngrpnr[i] && natoms0 == natoms1 && 
+	(g0->grpnr[i] != NULL || g1->grpnr[i] != NULL)) {
+      for(j=0; j<natoms0; j++) {
+	cmp_int(fp,gtypes[i],j,ggrpnr(g0,i,j),ggrpnr(g1,i,j));
+      }
+    }
+  }
+  /* We have compared the names in the groups lists,
+   * so we can skip the grpname list comparison.
+   */
+}
+
 static void cmp_rvecs(FILE *fp,const char *title,int n,rvec x1[],rvec x2[],
-		      bool bRMSD,real ftol,real abstol)
+		      gmx_bool bRMSD,real ftol,real abstol)
 {
   int i,m;
   double d,ssd;
@@ -384,7 +416,7 @@ static void cmp_rvecs(FILE *fp,const char *title,int n,rvec x1[],rvec x2[],
 	ssd += d*d;
       }
     }
-    fprintf(fp,"%s RMSD %f\n",title,sqrt(ssd/n));
+    fprintf(fp,"%s RMSD %g\n",title,sqrt(ssd/n));
   } else {
     for(i=0; (i<n); i++) {
       cmp_rvec(fp,title,i,x1[i],x2[i],ftol,abstol);
@@ -550,8 +582,10 @@ static void cmp_inputrec(FILE *fp,t_inputrec *ir1,t_inputrec *ir2,real ftol, rea
   cmp_real(fp,"inputrec->sc_sigma",-1,ir1->sc_sigma,ir2->sc_sigma,ftol,abstol);
   cmp_real(fp,"inputrec->sc_sigma_min",-1,ir1->sc_sigma_min,ir2->sc_sigma_min,ftol,abstol);
   cmp_int(fp,"inputrec->nstdhdl",-1,ir1->nstdhdl,ir2->nstdhdl);
-  cmp_int(fp,"inputrec->dh_table_size",-1,ir1->dh_table_size,ir2->dh_table_size);
-  cmp_double(fp,"inputrec->dh_table_spacing",-1,ir1->dh_table_spacing,ir2->dh_table_spacing,ftol,abstol);
+  cmp_int(fp,"inputrec->separate_dhdl_file",-1,ir1->separate_dhdl_file,ir2->nstdhdl);
+  cmp_int(fp,"inputrec->dhdl_derivatives",-1,ir1->dhdl_derivatives,ir2->dhdl_derivatives);
+  cmp_int(fp,"inputrec->dh_hist_size",-1,ir1->dh_hist_size,ir2->dh_hist_size);
+  cmp_double(fp,"inputrec->dh_hist_spacing",-1,ir1->dh_hist_spacing,ir2->dh_hist_spacing,ftol,abstol);
 
   cmp_int(fp,"inputrec->nwall",-1,ir1->nwall,ir2->nwall);
   cmp_int(fp,"inputrec->wall_type",-1,ir1->wall_type,ir2->wall_type);
@@ -615,7 +649,7 @@ static void comp_pull_AB(FILE *fp,t_pull *pull,real ftol,real abstol)
 }
 
 static void comp_state(t_state *st1, t_state *st2,
-		       bool bRMSD,real ftol,real abstol)
+		       gmx_bool bRMSD,real ftol,real abstol)
 {
   int i,j,nc;
 
@@ -675,7 +709,7 @@ static void comp_state(t_state *st1, t_state *st2,
 }
 
 void comp_tpx(const char *fn1,const char *fn2,
-	      bool bRMSD,real ftol,real abstol)
+	      gmx_bool bRMSD,real ftol,real abstol)
 {
   const char  *ff[2];
   t_tpxheader sh[2];
@@ -699,6 +733,8 @@ void comp_tpx(const char *fn1,const char *fn2,
     top[0] = gmx_mtop_t_to_t_topology(&mtop[0]);
     top[1] = gmx_mtop_t_to_t_topology(&mtop[1]);
     cmp_top(stdout,&top[0],&top[1],ftol,abstol);
+    cmp_groups(stdout,&mtop[0].groups,&mtop[1].groups,
+	       mtop[0].natoms,mtop[1].natoms);
     comp_state(&state[0],&state[1],bRMSD,ftol,abstol);
   } else {
     if (ir[0].efep == efepNO) {
@@ -718,7 +754,7 @@ void comp_tpx(const char *fn1,const char *fn2,
 }
 
 void comp_frame(FILE *fp, t_trxframe *fr1, t_trxframe *fr2,
-		bool bRMSD, real ftol,real abstol)
+		gmx_bool bRMSD, real ftol,real abstol)
 {
   fprintf(fp,"\n");
   cmp_int(fp,"flags",-1,fr1->flags,fr2->flags);
@@ -749,13 +785,13 @@ void comp_frame(FILE *fp, t_trxframe *fr1, t_trxframe *fr2,
 }
 
 void comp_trx(const output_env_t oenv,const char *fn1, const char *fn2, 
-              bool bRMSD,real ftol,real abstol)
+              gmx_bool bRMSD,real ftol,real abstol)
 {
   int i;
   const char *fn[2];
   t_trxframe fr[2];
   t_trxstatus *status[2];
-  bool b[2];
+  gmx_bool b[2];
   
   fn[0]=fn1;
   fn[1]=fn2;
@@ -818,7 +854,7 @@ static real ener_tensor_diag(int n,int *ind1,int *ind2,
   }
 }
 
-static bool enernm_equal(const char *nm1,const char *nm2)
+static gmx_bool enernm_equal(const char *nm1,const char *nm2)
 {
   int len1,len2;
 
@@ -1012,7 +1048,7 @@ void comp_enx(const char *fn1,const char *fn2,real ftol,real abstol,const char *
   char       buf[256];
   gmx_enxnm_t *enm1=NULL,*enm2=NULL;
   t_enxframe *fr1,*fr2;
-  bool       b1,b2;
+  gmx_bool       b1,b2;
   
   fprintf(stdout,"comparing energy file %s and %s\n\n",fn1,fn2);
 

@@ -1,4 +1,45 @@
 /*
+ * 
+ *             This source code is distributed with
+ * 
+ *                 G   R   O   M   A   C   S
+ * 
+ *          GROningen MAchine for Chemical Simulations
+ * 
+ *                           VERSION 4.5
+ * Written by David van der Spoel, Erik Lindahl, Berk Hess, and others.
+ * Copyright (c) 1991-2010, The GROMACS development team,
+ * check out http://www.gromacs.org for more information.
+ *
+ * Gromacs is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ * 
+ * If you want to redistribute modifications, please consider that
+ * scientific software is very special. Version control is crucial -
+ * bugs must be traceable. We will be happy to consider code for
+ * inclusion in the official distribution, but derived work must not
+ * be called official GROMACS. Details are found in the README & COPYING
+ * files - if they are missing, get the official version at www.gromacs.org.
+ * 
+ * To help us fund GROMACS development, we humbly ask that you cite
+ * the papers on the package - you can find them in the top README file.
+ * 
+ * For more info, check our website at http://www.gromacs.org
+ * 
+ * And Hey:
+ * GROningen Mixture of Alchemy and Childrens' Stories
+ */
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
+#ifdef GMX_INTEGER_BIG_ENDIAN
+#  define ARCH_IS_BIG_ENDIAN
+#endif
+
+/*
   Copyright (C) 1999, 2000, 2002 Aladdin Enterprises.  All rights reserved.
 
   This software is provided 'as-is', without any express or implied
@@ -135,7 +176,7 @@ md5_process(md5_state_t *pms, const md5_byte_t *data /*[64]*/)
 	a = pms->abcd[0], b = pms->abcd[1],
 	c = pms->abcd[2], d = pms->abcd[3];
     md5_word_t t;
-#if BYTE_ORDER > 0
+#if ( BYTE_ORDER > 0 )
     /* Define storage only for big-endian CPUs. */
     md5_word_t X[16];
 #else
@@ -145,7 +186,7 @@ md5_process(md5_state_t *pms, const md5_byte_t *data /*[64]*/)
 #endif
 
     {
-#if BYTE_ORDER == 0
+#if ( BYTE_ORDER == 0 )
 	/*
 	 * Determine dynamically whether this is a big-endian or
 	 * little-endian machine, since we can use a more efficient
@@ -155,7 +196,7 @@ md5_process(md5_state_t *pms, const md5_byte_t *data /*[64]*/)
 
 	if (*((const md5_byte_t *)&w)) /* dynamic little-endian */
 #endif
-#if BYTE_ORDER <= 0		/* little-endian */
+#if ( BYTE_ORDER < 1 )		/* little-endian */
 	{
 	    /*
 	     * On little-endian machines, we can process properly aligned
@@ -171,10 +212,10 @@ md5_process(md5_state_t *pms, const md5_byte_t *data /*[64]*/)
 	    }
 	}
 #endif
-#if BYTE_ORDER == 0
+#if ( BYTE_ORDER == 0 )
 	else			/* dynamic big-endian */
 #endif
-#if BYTE_ORDER >= 0		/* big-endian */
+#if ( BYTE_ORDER > -1 )		/* big-endian */
 	{
 	    /*
 	     * On big-endian machines, we must arrange the bytes in the
