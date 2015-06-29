@@ -392,6 +392,53 @@ static void exchange_state(const gmx_multisim_t *ms,int b,t_state *state)
   exchange_rvecs(ms,b,state->sd_X,state->natoms);
 }
 
+static void copy_rvecs(rvec *s,rvec *d,int n)
+{
+    int i;
+
+    for(i=0; i<n; i++)
+    {
+        copy_rvec(s[i],d[i]);
+    }
+}
+
+static void copy_doubles(double *s,double *d,int n)
+{
+    int i;
+
+    for(i=0; i<n; i++)
+    {
+        d[i] = s[i];
+    }
+}
+
+#define scopy_rvecs(v,n)   copy_rvecs(state->v,state_local->v,n)
+#define scopy_doubles(v,n) copy_doubles(state->v,state_local->v,n)
+
+static void copy_state_nonatomdata(t_state *state,t_state *state_local)
+{
+  /* When t_state changes, this code should be updated. */
+  int ngtc,nnhpres;
+  ngtc = state->ngtc * state->nhchainlength;
+  nnhpres = state->nnhpres* state->nhchainlength;
+  scopy_rvecs(box,DIM);
+  scopy_rvecs(box_rel,DIM);
+  scopy_rvecs(boxv,DIM);
+  state_local->veta = state->veta;
+  state_local->vol0 = state->vol0;
+  scopy_rvecs(svir_prev,DIM);
+  scopy_rvecs(fvir_prev,DIM);
+  scopy_rvecs(pres_prev,DIM);
+  scopy_doubles(nosehoover_xi,ngtc);
+  scopy_doubles(nosehoover_vxi,ngtc);  
+  scopy_doubles(nhpres_xi,nnhpres);
+  scopy_doubles(nhpres_vxi,nnhpres);  
+  scopy_doubles(therm_integral,state->ngtc);
+  scopy_rvecs(x,state->natoms);
+  scopy_rvecs(v,state->natoms);
+  scopy_rvecs(sd_X,state->natoms);
+}
+
 static void scale_velocities(t_state *state,real fac)
 {
   int i;
@@ -573,31 +620,31 @@ static void write_debug_x(t_state *state)
 }
 
 bool replica_exchange(FILE *fplog,const t_commrec *cr,struct gmx_repl_ex *re,
-		      t_state *state,real *ener,
-		      t_state *state_local,
-		      int step,real time) /*watch this line*/
+                      t_state *state,real *ener,
+                      t_state *state_local,
+                      int step,real time) /*watch this line*/
 {
-  gmx_multisim_t *ms;
-  int  exchange=-1,shift;
-  bool bExchanged=FALSE;
-
-  ms = cr->ms;
-
+    gmx_multisim_t *ms;
+    int  exchange=-1,shift;
+    bool bExchanged=FALSE;
+    
+    ms = cr->ms;
+  
     if (MASTER(cr))
     {
-    exchange = get_replica_exchange(fplog,ms,re,ener,det(state->box),
-				    step,time);
-    bExchanged = (exchange >= 0);
-  }
-      
+        exchange = get_replica_exchange(fplog,ms,re,ener,det(state->box),
+                                        step,time);
+        bExchanged = (exchange >= 0);
+    }
+    
     if (PAR(cr))
     {
 #ifdef GMX_MPI
-    MPI_Bcast(&bExchanged,sizeof(bool),MPI_BYTE,MASTERRANK(cr),
-	      cr->mpi_comm_mygroup);
+        MPI_Bcast(&bExchanged,sizeof(bool),MPI_BYTE,MASTERRANK(cr),
+                  cr->mpi_comm_mygroup);
 #endif
-  }
-  
+    }
+    
     if (bExchanged)
     {
         /* Exchange the states */
@@ -605,30 +652,31 @@ bool replica_exchange(FILE *fplog,const t_commrec *cr,struct gmx_repl_ex *re,
         if (PAR(cr))
         {
             /* Collect the global state on the master node */
-      if (DOMAINDECOMP(cr))
+            if (DOMAINDECOMP(cr))
             {
-	dd_collect_state(cr->dd,state_local,state);
+                dd_collect_state(cr->dd,state_local,state);
             }
-      else
+            else
             {
-	pd_collect_state(cr,state);
-    }
+                pd_collect_state(cr,state);
+            }
         }
         
         if (MASTER(cr))
         {
             /* Exchange the global states between the master nodes */
-      if (debug)
+            if (debug)
             {
-	fprintf(debug,"Exchanging %d with %d\n",ms->sim,exchange);
+                fprintf(debug,"Exchanging %d with %d\n",ms->sim,exchange);
             }
-      exchange_state(ms,exchange,state);
-      if (re->type == ereTEMP)
+            exchange_state(ms,exchange,state);
+            
+            if (re->type == ereTEMP)
             {
-	scale_velocities(state,sqrt(re->q[ms->sim]/re->q[exchange]));
-    }
-  }
-  
+                scale_velocities(state,sqrt(re->q[ms->sim]/re->q[exchange]));
+            }
+        }
+
         /* With domain decomposition the global state is distributed later */
         if (!DOMAINDECOMP(cr))
         {
@@ -642,7 +690,7 @@ bool replica_exchange(FILE *fplog,const t_commrec *cr,struct gmx_repl_ex *re,
         }
     }
         
-  return bExchanged;
+    return bExchanged;
 }
 
 void print_replica_exchange_statistics(FILE *fplog,struct gmx_repl_ex *re) /*watch this line for future*/
