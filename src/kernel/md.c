@@ -2701,7 +2701,7 @@ double do_md(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
     			tempfn[i]=ftp2fn(efLOG,nfile,fnm)[i];
     		}
     		tempfn[i]='\0';
-    		sprintf(tempfn, "%s_%ld.pdb", tempfn, step); /*notice that step is long int*/
+    		sprintf(tempfn, "%s_%lld.pdb", tempfn, step); /*notice that step is gmx_large_int_t (long long int) */
 
     		// /* there is sample of another function call for next function up in the same file */
     		write_sto_conf_mtop(tempfn, *top_global->name,top_global, state_global->x,state_global->v, ir->ePBC,state->box);
