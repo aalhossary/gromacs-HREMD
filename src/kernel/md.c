@@ -316,7 +316,7 @@ static void compute_globals(FILE *fplog, gmx_global_stat_t gstat, t_commrec *cr,
     bEkinAveVel = (ir->eI==eiVV || (ir->eI==eiVVAK && IR_NPT_TROTTER(ir) && bPres) || bReadEkin);
 
     /* in initalization, it sums the shake virial in vv, and to 
-       sums ekinh_old in leapfrog (or if we are calculating ekinh_old for other reasons */
+       sums ekinh_old in leapfrog (or if we are calculating ekinh_old) for other reasons */
 
     /* ########## Kinetic energy  ############## */
     
@@ -951,6 +951,47 @@ static void set_nlistheuristics(gmx_nlheur_t *nlh,bool bReset,gmx_large_int_t st
     }
 }
 
+static void rerun_parallel_comm(t_commrec *cr,t_trxframe *fr,
+                                bool *bNotLastFrame)
+{
+    bool bAlloc;
+    rvec *xp,*vp;
+
+    bAlloc = (fr->natoms == 0);
+
+    if (MASTER(cr) && !*bNotLastFrame)
+    {
+        fr->natoms = -1;
+    }
+    xp = fr->x;
+    vp = fr->v;
+    gmx_bcast(sizeof(*fr),fr,cr);
+    fr->x = xp;
+    fr->v = vp;
+
+    *bNotLastFrame = (fr->natoms >= 0);
+
+    if (*bNotLastFrame && PARTDECOMP(cr))
+    {
+        /* x and v are the only variable size quantities stored in trr
+         * that are required for rerun (f is not needed).
+         */
+        if (bAlloc)
+        {
+            snew(fr->x,fr->natoms);
+            snew(fr->v,fr->natoms);
+        }
+        if (fr->bX)
+        {
+            gmx_bcast(fr->natoms*sizeof(fr->x[0]),fr->x[0],cr);
+        }
+        if (fr->bV)
+        {
+            gmx_bcast(fr->natoms*sizeof(fr->v[0]),fr->v[0],cr);
+        }
+    }
+}
+
 double do_md(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
              const output_env_t oenv, bool bVerbose,bool bCompact,
              int nstglobalcomm,
@@ -1017,7 +1058,7 @@ double do_md(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
     bool        bTCR=FALSE,bConverged=TRUE,bOK,bSumEkinhOld,bExchanged;
     bool        bAppend;
     bool        bResetCountersHalfMaxH=FALSE;
-    bool        bVV,bIterations,bIterate,bFirstIterate,bTemp,bPres,bTrotter;
+    bool        bVV,bIterations,bFirstIterate,bTemp,bPres,bTrotter;
     real        temp0,mu_aver=0,dvdl;
     int         a0,a1,gnx=0,ii;
     atom_id     *grpindex=NULL;
@@ -1366,7 +1407,7 @@ double do_md(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
                     "RMS relative constraint deviation after constraining: %.2e\n",
                     constr_rmsd(constr,FALSE));
         }
-        if (bVV) 
+        if (!bVV) 
         {
             enerd->term[F_TEMP] *= 2; /* result of averages being done over previous and current step,
                                          and there is no previous step */
@@ -1929,7 +1970,7 @@ double do_md(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
                                     | (bTemp ? CGLO_TEMPERATURE:0) 
                                     | (bPres ? CGLO_PRESSURE : 0) 
                                     | (bPres ? CGLO_CONSTRAINT : 0)
-                                    | (iterate.bIterate ? CGLO_ITERATE : 0)  
+                                    | ((bIterations && iterate.bIterate) ? CGLO_ITERATE : 0)  
                                     | (bFirstIterate ? CGLO_FIRSTITERATE : 0)
                                     | CGLO_SCALEEKIN 
                         );
@@ -2605,35 +2646,25 @@ double do_md(FILE *fplog,t_commrec *cr,int nfile,const t_filenm fnm[],
 
     	}
     	// /*the  original replica_exchange() call line (we shall change this behavior later */
-    	bExchanged =   replica_exchange(fplog,cr,repl_ex,state_global,enerd->term,state,step,t); /*watch this line*/
+    	bExchanged = replica_exchange(fplog,cr,repl_ex,state_global,enerd->term,state,step,t); /*watch this line*/
 
 		if (MASTER(cr)) {/*This check was made by Amr to prevent a potential bug*/
 			enerd->term[F_EPOT]=epot_backup;
 		}
 
-    }
+//    }
     //////////////end of HREMD /////////////////////////////////
 
+		if (bExchanged && DOMAINDECOMP(cr))
+		{
+			dd_partition_system(fplog,step,cr,TRUE,1,
+					state_global,top_global,ir,
+					state,&f,mdatoms,top,fr,
+					vsite,shellfc,constr,
+					nrnb,wcycle,FALSE);
+		}
+    }
 
-
-
-
-        if (bExchanged && PAR(cr)) 
-        {
-            if (DOMAINDECOMP(cr)) 
-            {
-                dd_partition_system(fplog,step,cr,TRUE,1,
-                                    state_global,top_global,ir,
-                                    state,&f,mdatoms,top,fr,
-                                    vsite,shellfc,constr,
-                                    nrnb,wcycle,FALSE);
-            } 
-            else 
-            {
-                bcast_state(cr,state,FALSE);
-            }
-        }
-        
         bFirstStep = FALSE;
         bInitStep = FALSE;
         bStartingFromCpt = FALSE;

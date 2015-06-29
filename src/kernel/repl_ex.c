@@ -370,7 +370,6 @@ static void exchange_rvecs(const gmx_multisim_t *ms,int b,rvec *v,int n)
 
 static void exchange_state(const gmx_multisim_t *ms,int b,t_state *state)
 {
-
   /* When t_state changes, this code should be updated. */
   int ngtc,nnhpres;
   ngtc = state->ngtc * state->nhchainlength;
@@ -584,35 +583,65 @@ bool replica_exchange(FILE *fplog,const t_commrec *cr,struct gmx_repl_ex *re,
 
   ms = cr->ms;
 
-  if (MASTER(cr)) {
+    if (MASTER(cr))
+    {
     exchange = get_replica_exchange(fplog,ms,re,ener,det(state->box),
 				    step,time);
     bExchanged = (exchange >= 0);
   }
       
-  if (PAR(cr)) {
+    if (PAR(cr))
+    {
 #ifdef GMX_MPI
     MPI_Bcast(&bExchanged,sizeof(bool),MPI_BYTE,MASTERRANK(cr),
 	      cr->mpi_comm_mygroup);
 #endif
   }
   
-  if (bExchanged) {
-    if (PAR(cr)) {
+    if (bExchanged)
+    {
+        /* Exchange the states */
+
+        if (PAR(cr))
+        {
+            /* Collect the global state on the master node */
       if (DOMAINDECOMP(cr))
+            {
 	dd_collect_state(cr->dd,state_local,state);
+            }
       else
+            {
 	pd_collect_state(cr,state);
     }
-    if (MASTER(cr)) {
+        }
+        
+        if (MASTER(cr))
+        {
+            /* Exchange the global states between the master nodes */
       if (debug)
+            {
 	fprintf(debug,"Exchanging %d with %d\n",ms->sim,exchange);
+            }
       exchange_state(ms,exchange,state);
       if (re->type == ereTEMP)
+            {
 	scale_velocities(state,sqrt(re->q[ms->sim]/re->q[exchange]));
     }
   }
   
+        /* With domain decomposition the global state is distributed later */
+        if (!DOMAINDECOMP(cr))
+        {
+            /* Copy the global state to the local state data structure */
+            copy_state_nonatomdata(state,state_local);
+            
+            if (PAR(cr))
+            {
+                bcast_state(cr,state,FALSE);
+            }
+        }
+    }
+        
   return bExchanged;
 }
 
