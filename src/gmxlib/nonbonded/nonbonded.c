@@ -205,7 +205,7 @@ nb_kernel_list = NULL;
 
 
 void
-gmx_setup_kernels(FILE *fplog)
+gmx_setup_kernels(FILE *fplog,bool bGenericKernelOnly)
 {
     int i;
     
@@ -220,14 +220,8 @@ gmx_setup_kernels(FILE *fplog)
         nb_kernel_list[i] = NULL;
     }
     
-    if(getenv("GMX_NB_GENERIC") != NULL)
+    if (bGenericKernelOnly)
     {
-        if(fplog)
-        {
-            fprintf(fplog,
-                    "Found environment variable GMX_NB_GENERIC.\n"
-                    "Disabling interaction-specific nonbonded kernels.\n\n");
-        }
         return;
     }
 	
@@ -345,17 +339,13 @@ void do_nonbonded(t_commrec *cr,t_forcerec *fr,
             if(fr->UseOptimizedKernels)
             {
                 gmx_fatal(FARGS,"Cannot do double precision SSE2 all-vs-all kernels for now.");
-#if 0
-                nb_kernel_allvsallgb_sse2_double(fr,mdatoms,excl,x[0],f[0],egcoul,egnb,egpol,
-                                                 &outeriter,&inneriter,&fr->AllvsAll_work);
-#endif
             }
             else
             {
                 nb_kernel_allvsallgb(fr,mdatoms,excl,x[0],f[0],egcoul,egnb,egpol,
                                      &outeriter,&inneriter,&fr->AllvsAll_work);        
             }
-#  else
+#  else /* not double */
             if(fr->UseOptimizedKernels)
             {
                 nb_kernel_allvsallgb_sse2_single(fr,mdatoms,excl,x[0],f[0],egcoul,egnb,egpol,
@@ -366,10 +356,11 @@ void do_nonbonded(t_commrec *cr,t_forcerec *fr,
                 nb_kernel_allvsallgb(fr,mdatoms,excl,x[0],f[0],egcoul,egnb,egpol,
                                      &outeriter,&inneriter,&fr->AllvsAll_work);        
             }
-#  endif
+#  endif /* double/single alt. */
+#else /* no SSE support compiled in */
             nb_kernel_allvsallgb(fr,mdatoms,excl,x[0],f[0],egcoul,egnb,egpol,
-                                 &outeriter,&inneriter,&fr->AllvsAll_work);        
-#endif     
+                                 &outeriter,&inneriter,&fr->AllvsAll_work);                    
+#endif
             inc_nrnb(nrnb,eNR_NBKERNEL_ALLVSALLGB,inneriter);
         }
         else
@@ -379,10 +370,6 @@ void do_nonbonded(t_commrec *cr,t_forcerec *fr,
             if(fr->UseOptimizedKernels)
             {
                 gmx_fatal(FARGS,"Cannot do double precision SSE2 all-vs-all kernels for now.");
-#if 0
-                nb_kernel_allvsall_sse2_double(fr,mdatoms,excl,x[0],f[0],egcoul,egnb,
-                                               &outeriter,&inneriter,&fr->AllvsAll_work);
-#endif
             }
             else 
             {
@@ -390,7 +377,7 @@ void do_nonbonded(t_commrec *cr,t_forcerec *fr,
                                    &outeriter,&inneriter,&fr->AllvsAll_work);            
             }
             
-#  else
+#  else /* not double */
             if(fr->UseOptimizedKernels)
             {
                 nb_kernel_allvsall_sse2_single(fr,mdatoms,excl,x[0],f[0],egcoul,egnb,
@@ -402,8 +389,8 @@ void do_nonbonded(t_commrec *cr,t_forcerec *fr,
                                    &outeriter,&inneriter,&fr->AllvsAll_work);            
             }
 
-#  endif
-#else
+#  endif /* double/single check */
+#else /* No SSE2 support compiled in */
             nb_kernel_allvsall(fr,mdatoms,excl,x[0],f[0],egcoul,egnb,
                                &outeriter,&inneriter,&fr->AllvsAll_work);
 #endif            
@@ -541,7 +528,8 @@ void do_nonbonded(t_commrec *cr,t_forcerec *fr,
 											  dvdlambda,
 											  fr->sc_alpha,
 											  fr->sc_power,
-											  fr->sc_sigma6,
+											  fr->sc_sigma6_def,
+                                              fr->sc_sigma6_min,
                                               bDoForces,
 											  &outeriter,
 											  &inneriter);
@@ -878,7 +866,8 @@ do_listed_vdw_q(int ftype,int nbonds,
                                       dvdlambda,
                                       fr->sc_alpha,
                                       fr->sc_power,
-                                      fr->sc_sigma6,
+                                      fr->sc_sigma6_def,
+                                      fr->sc_sigma6_min,
                                       TRUE,
                                       &outeriter,
                                       &inneriter);

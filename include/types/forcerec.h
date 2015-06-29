@@ -205,7 +205,8 @@ typedef struct {
   int  efep;
   real sc_alpha;
   int  sc_power;
-  real sc_sigma6;
+  real sc_sigma6_def;
+  real sc_sigma6_min;
   bool bSepDVDL;
 
   /* NS Stuff */
@@ -218,6 +219,7 @@ typedef struct {
   int  solvent_opt;
   int  nWatMol;
   bool bGrid;
+  bool bExcl_IntraCGAll_InterCGNone;
   cginfo_mb_t *cginfo_mb;
   int  *cginfo;
   rvec *cg_cm;
