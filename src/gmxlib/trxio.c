@@ -257,7 +257,7 @@ int write_trxframe_indexed(t_trxstatus *status,t_trxframe *fr,int nind,
 			    fr->x,fr->bV ? fr->v : NULL,fr->box);
     else
       write_pdbfile_indexed(gmx_fio_getfp(status->fio),title,fr->atoms,
-			    fr->x,-1,fr->box,0,fr->step,nind,ind,gc);
+			    fr->x,-1,fr->box,' ',fr->step,nind,ind,gc,TRUE);
     break;
   case efG87:
     write_gms(gmx_fio_getfp(status->fio),nind,xout,fr->box);
@@ -332,7 +332,7 @@ int write_trxframe(t_trxstatus *status,t_trxframe *fr,gmx_conect gc)
     else
       write_pdbfile(gmx_fio_getfp(status->fio),title,
 		    fr->atoms,fr->x,fr->bPBC ? fr->ePBC : -1,fr->box,
-		    0,fr->step,gc);
+		    ' ',fr->step,gc,TRUE);
     break;
   case efG87:
     write_gms(gmx_fio_getfp(status->fio),fr->natoms,fr->x,fr->box);
@@ -375,6 +375,7 @@ int write_trx(t_trxstatus *status,int nind,atom_id *ind,t_atoms *atoms,
 void close_trx(t_trxstatus *status)
 {
   gmx_fio_close(status->fio);
+  sfree(status);
 }
 
 t_trxstatus *open_trx(const char *outfile,const char *filemode)

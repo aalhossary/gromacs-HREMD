@@ -54,6 +54,7 @@ files.
  * \sa http://www.mpi-forum.org/docs/docs.html for MPI documentation.
 */
 
+#include <stdlib.h>
 
 #ifdef __cplusplus
 extern "C" 
@@ -63,8 +64,6 @@ extern "C"
 } /* Avoids screwing up auto-indentation */
 #endif
 
-/*#include "thread_mpi/threads.h"
-#include "thread_mpi/atomic.h"*/
 
 
 /** tMPI Communicator

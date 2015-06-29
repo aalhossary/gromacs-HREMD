@@ -40,6 +40,7 @@
 #include <config.h>
 #endif
 
+
 #include "typedefs.h"
 #include "mshift.h"
 #include "tgroup.h"
@@ -47,6 +48,7 @@
 #include "force.h"
 #include "pull.h"
 #include "gmx_random.h"
+#include "maths.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -167,7 +169,7 @@ extern void calc_ke_part(t_state *state,t_grpopts *opts,t_mdatoms *md,
  */
 
 extern void
-init_ekinstate(ekinstate_t *ekinstate,t_inputrec *ir);
+init_ekinstate(ekinstate_t *ekinstate,const t_inputrec *ir);
 
 extern void
 update_ekinstate(ekinstate_t *ekinstate,gmx_ekindata_t *ekind);
@@ -185,9 +187,8 @@ extern t_state *init_bufstate(const t_state *template_state);
 
 extern void destroy_bufstate(t_state *state);
 
-extern void trotter_update(t_inputrec *ir,gmx_large_int_t step,
-			   gmx_ekindata_t *ekind, gmx_enerdata_t *enerd, 
-			   t_state *state, tensor vir, t_mdatoms *md, 
+extern void trotter_update(t_inputrec *ir, gmx_large_int_t step, gmx_ekindata_t *ekind, 
+			   gmx_enerdata_t *enerd, t_state *state, tensor vir, t_mdatoms *md, 
 			   t_extmass *MassQ, int *trotter_seq);
 
 extern int **init_npt_vars(t_inputrec *ir, t_state *state, t_extmass *Mass, bool bTrotter); 

@@ -575,11 +575,12 @@ int gmx_confrms(int argc,char *argv[])
       /* Avoid segfaults when writing the pdb-file */
       for (i=0; i<atoms1->nr; i++) {
 	atoms1->pdbinfo[i].type = eptAtom;
+	atoms1->pdbinfo[i].occup = 1.00;
 	atoms1->pdbinfo[i].bAnisotropic = FALSE;
 	if (bBfac)
 	  atoms1->pdbinfo[i].bfac = 0;
 	if (bLabel)
-	  atoms1->resinfo[atoms1->atom[i].resind].chain = 'A';
+	  atoms1->resinfo[atoms1->atom[i].resind].chainid = 'A';
       }
 
       for(i=0; i<isize1; i++) {
@@ -595,11 +596,12 @@ int gmx_confrms(int argc,char *argv[])
 
       for (i=0; i<atoms2->nr; i++) {
 	atoms2->pdbinfo[i].type = eptAtom;
+	atoms2->pdbinfo[i].occup = 1.00;
 	atoms2->pdbinfo[i].bAnisotropic = FALSE;
 	if (bBfac)
 	  atoms2->pdbinfo[i].bfac = 0;
 	if (bLabel)
-	  atoms2->resinfo[atoms1->atom[i].resind].chain = 'B';
+	  atoms2->resinfo[atoms1->atom[i].resind].chainid = 'B';
       }
 
       for(i=0; i<isize2; i++) {
@@ -613,8 +615,8 @@ int gmx_confrms(int argc,char *argv[])
     }
     fp=ffopen(outfile,"w");
     if (!bOne)
-      write_pdbfile(fp,title1,atoms1,x1,ePBC1,box1,0,1,NULL);
-    write_pdbfile(fp,title2,atoms2,x2,ePBC2,box2,0,bOne ? -1 : 2,NULL);
+      write_pdbfile(fp,title1,atoms1,x1,ePBC1,box1,' ',1,NULL,TRUE);
+    write_pdbfile(fp,title2,atoms2,x2,ePBC2,box2,' ',bOne ? -1 : 2,NULL,TRUE);
     ffclose(fp);
     break;
   case efGRO:
