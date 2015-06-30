@@ -845,14 +845,22 @@ static void gen_posres(gmx_mtop_t *mtop,t_molinfo *mi,
 }
 
 static void set_wall_atomtype(gpp_atomtype_t at,t_gromppopts *opts,
-			      t_inputrec *ir)
+                              t_inputrec *ir, warninp_t wi)
 {
   int i;
+  char warn_buf[STRLEN];
 
   if (ir->nwall > 0)
     fprintf(stderr,"Searching the wall atom type(s)\n");
   for(i=0; i<ir->nwall; i++)
-    ir->wall_atomtype[i] = get_atomtype_type(opts->wall_atomtype[i],at);
+  {
+      ir->wall_atomtype[i] = get_atomtype_type(opts->wall_atomtype[i],at);
+      if (ir->wall_atomtype[i] == NOTSET)
+      {
+          sprintf(warn_buf,"Specified wall atom type %s is not defined",opts->wall_atomtype[i]);
+          warning_error(wi,warn_buf);
+      }
+  }
 }
 
 static int nrdf_internal(t_atoms *atoms)
@@ -1123,6 +1131,22 @@ static void check_gbsa_params(t_inputrec *ir,gpp_atomtype_t atype)
         gmx_fatal(FARGS,"Can't do GB electrostatics; the implicit_genborn_params section of the forcefield is missing parameters for %d atomtypes or they might be negative.",nmiss);
     }
   
+}
+
+static void check_settle(gmx_mtop_t   *sys)
+{
+    int i,j,cgj1,nra;
+    
+    nra = interaction_function[F_SETTLE].nratoms;
+    for(i=0; (i<sys->nmoltype); i++) 
+    {
+        for(j=0; (j<sys->moltype[i].ilist[F_SETTLE].nr); j+=nra+1)
+        {
+            cgj1 = sys->moltype[i].cgs.index[j+1];
+            if (j+2 >= cgj1)
+                gmx_fatal(FARGS,"For SETTLE you need to have all atoms involved in one charge group. Please fix your topology.");
+        }
+    }
 }
 
 int main (int argc, char *argv[])
@@ -1425,7 +1449,7 @@ int main (int argc, char *argv[])
 		setup_cmap(plist->grid_spacing, plist->nc, plist->cmap,&sys->ffparams.cmap_grid);
 	}
 	
-  set_wall_atomtype(atype,opts,ir);
+  set_wall_atomtype(atype,opts,ir,wi);
   if (bRenum) {
     renum_atype(plist, sys, ir->wall_atomtype, atype, bVerbose);
     ntype = get_atomtype_ntypes(atype);
@@ -1469,6 +1493,9 @@ int main (int argc, char *argv[])
     check_vel(sys,state.v);
   }
     
+  /* check for charge groups in settles */
+  check_settle(sys);
+  
   /* check masses */
   check_mol(sys,wi);
   

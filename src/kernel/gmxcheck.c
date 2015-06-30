@@ -157,10 +157,12 @@ static void chk_coords(int frame,int natoms,rvec *x,matrix box,real fac,real tol
 	printf("Warning at frame %d: coordinates for atom %d are large (%g)\n",
 	       frame,i,x[i][j]);
     }
-    if ((fabs(x[j][XX]) < tol) && 
-	(fabs(x[j][YY]) < tol) && 
-	(fabs(x[j][ZZ]) < tol))
-      nNul++;
+    if ((fabs(x[i][XX]) < tol) && 
+        (fabs(x[i][YY]) < tol) && 
+        (fabs(x[i][ZZ]) < tol))
+    {
+        nNul++;
+    }
   }
   if (nNul > 0)
     printf("Warning at frame %d: there are %d particles with all coordinates zero\n",
@@ -249,12 +251,13 @@ void chk_trj(const output_env_t oenv,const char *fn,const char *tpr,real tol)
   gmx_bool         bShowTimestep=TRUE,bOK,newline=FALSE;
   t_trxstatus *status;
   gmx_mtop_t   mtop;
-  gmx_localtop_t *top;
+  gmx_localtop_t *top=NULL;
   t_state      state;
   t_inputrec   ir;
   
   if (tpr) {
     read_tpx_state(tpr,&ir,&state,NULL,&mtop);
+    top = gmx_mtop_generate_local_top(&mtop,&ir);
   }
   new_natoms = -1;
   natoms = -1;  
@@ -314,7 +317,6 @@ void chk_trj(const output_env_t oenv,const char *fn,const char *tpr,real tol)
     }
     natoms=new_natoms;
     if (tpr) {
-      top = gmx_mtop_generate_local_top(&mtop,&ir);
       chk_bonds(&top->idef,ir.ePBC,fr.x,fr.box,tol);
     }
     if (fr.bX)
@@ -654,7 +656,7 @@ int main(int argc,char *argv[])
     { "-rmsd",   FALSE, etBOOL, {&bRMSD},
       "Print RMSD for x, v and f" },
     { "-tol",    FALSE, etREAL, {&ftol},
-      "Relative tolerance for comparing real values defined as 2*(a-b)/(|a|+|b|)" },
+      "Relative tolerance for comparing real values defined as [MATH]2*(a-b)/([MAG]a[mag]+[MAG]b[mag])[math]" },
     { "-abstol",    FALSE, etREAL, {&abstol},
       "Absolute tolerance, useful when sums are close to zero." },
     { "-ab",     FALSE, etBOOL, {&bCompAB},

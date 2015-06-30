@@ -474,7 +474,7 @@ int main(int argc,char *argv[])
     { "-multi",   FALSE, etINT,{&nmultisim}, 
       "Do multiple simulations in parallel" },
     { "-replex",  FALSE, etINT, {&repl_ex_nst}, 
-      "Attempt replica exchange every # steps" },
+      "Attempt replica exchange periodically with this period (steps)" },
     { "-reseed",  FALSE, etINT, {&repl_ex_seed}, 
       "Seed for replica exchange, -1 is generate a seed" },
     { "-rerunvsite", FALSE, etBOOL, {&bRerunVSite},
@@ -596,7 +596,7 @@ int main(int argc,char *argv[])
           sim_part = sim_part_fn + 1;
       }
 
-      if (MULTISIM(cr))
+      if (MULTISIM(cr) && MASTER(cr))
       {
           check_multi_int(stdout,cr->ms,sim_part,"simulation part");
       }
@@ -634,6 +634,7 @@ int main(int argc,char *argv[])
   Flags = Flags | (bRerunVSite   ? MD_RERUN_VSITE  : 0);
   Flags = Flags | (bReproducible ? MD_REPRODUCIBLE : 0);
   Flags = Flags | (bAppendFiles  ? MD_APPENDFILES  : 0); 
+  Flags = Flags | (opt2parg_bSet("-append", asize(pa),pa) ? MD_APPENDFILESSET : 0); 
   Flags = Flags | (bKeepAndNumCPT ? MD_KEEPANDNUMCPT : 0); 
   Flags = Flags | (sim_part>1    ? MD_STARTFROMCPT : 0); 
   Flags = Flags | (bResetCountersHalfWay ? MD_RESETCOUNTERSHALFWAY : 0);

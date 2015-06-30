@@ -433,7 +433,20 @@ void check_ir(const char *mdparin,t_inputrec *ir, t_gromppopts *opts,
         
         sprintf(err_buf,"pressure coupling with PPPM not implemented, use PME");
         CHECK(ir->coulombtype == eelPPPM);
-        
+
+        if (epcPARRINELLORAHMAN == ir->epc && opts->bGenVel)
+        {
+            sprintf(warn_buf,
+                    "You are generating velocities so I am assuming you "
+                    "are equilibrating a system. You are using "
+                    "%s pressure coupling, but this can be "
+                    "unstable for equilibration. If your system crashes, try "
+                    "equilibrating first with Berendsen pressure coupling. If "
+                    "you are not equilibrating the system, you can probably "
+                    "ignore this warning.",
+                    epcoupl_names[ir->epc]);
+            warning(wi,warn_buf);
+        }
     }
     else if (ir->coulombtype == eelPPPM)
     {
@@ -924,7 +937,7 @@ void get_ir(const char *mdparin,const char *mdparout,
   EETYPE("DispCorr",    ir->eDispCorr,  edispc_names);
   CTYPE ("Extension of the potential lookup tables beyond the cut-off");
   RTYPE ("table-extension", ir->tabext, 1.0);
-  CTYPE ("Seperate tables between energy group pairs");
+  CTYPE ("Separate tables between energy group pairs");
   STYPE ("energygrp_table", egptable,   NULL);
   CTYPE ("Spacing for the PME/PPPM FFT grid");
   RTYPE ("fourierspacing", opts->fourierspacing,0.12);
@@ -1317,7 +1330,12 @@ int search_string(char *s,int ng,char *gn[])
     }
   }
     
-  gmx_fatal(FARGS,"Group %s not found in index file.\nGroup names must match either [moleculetype] names\nor custom index group names,in which case you\nmust supply an index file to the '-n' option of grompp.",s);
+  gmx_fatal(FARGS,
+            "Group %s referenced in the .mdp file was not found in the index file.\n"
+            "Group names must match either [moleculetype] names or custom index group\n"
+            "names, in which case you must supply an index file to the '-n' option\n"
+            "of grompp.",
+            s);
   
   return -1;
 }
@@ -1444,8 +1462,9 @@ static gmx_bool do_numbering(int natoms,gmx_groups_t *groups,int ng,char *ptrs[]
         }
     }
     
-    if (grps->nr == 1)
+    if (grps->nr == 1 && (ntot == 0 || ntot == natoms))
     {
+        /* All atoms are part of one (or no) group, no index required */
         groups->ngrpnr[gtype] = 0;
         groups->grpnr[gtype]  = NULL;
     }

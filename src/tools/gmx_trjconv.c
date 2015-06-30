@@ -603,8 +603,8 @@ int gmx_trjconv(int argc,char *argv[])
         "[TT]rect[tt] is the ordinary brick shape.",
         "[TT]tric[tt] is the triclinic unit cell.", 
         "[TT]compact[tt] puts all atoms at the closest distance from the center",
-        "of the box. This can be useful for visualizing e.g. truncated",
-        "octahedra. The center for options [TT]tric[tt] and [TT]compact[tt]",
+        "of the box. This can be useful for visualizing e.g. truncated octahedra",
+        "or rhombic dodecahedra. The center for options [TT]tric[tt] and [TT]compact[tt]",
         "is [TT]tric[tt] (see below), unless the option [TT]-boxcenter[tt]",
         "is set differently.[PAR]",
 
@@ -944,7 +944,9 @@ int gmx_trjconv(int argc,char *argv[])
 
         bSubTraj = opt2bSet("-sub",NFILE,fnm);
         if (bSubTraj) {
-            if ((ftp != efXTC) && (ftp != efTRN))
+            if ((ftp != efXTC) && (ftp != efTRR))
+                /* It seems likely that other trajectory file types
+                 * could work here. */
                 gmx_fatal(FARGS,"Can only use the sub option with output file types "
                           "xtc and trr");
             clust = cluster_index(NULL,opt2fn("-sub",NFILE,fnm));
@@ -1201,7 +1203,7 @@ int gmx_trjconv(int argc,char *argv[])
                 if (bSubTraj) {
                     /*if (frame >= clust->clust->nra)
 	    gmx_fatal(FARGS,"There are more frames in the trajectory than in the cluster index file\n");*/
-                    if (frame >= clust->maxframe)
+                    if (frame > clust->maxframe)
                         my_clust = -1;
                     else
                         my_clust = clust->inv_clust[frame];
@@ -1388,8 +1390,8 @@ int gmx_trjconv(int argc,char *argv[])
                         }
                         /* Copy the input trxframe struct to the output trxframe struct */
                         frout = fr;
-			frout.bV    &= bVels;
-			frout.bF    &= bForce;
+			frout.bV = (frout.bV && bVels);
+			frout.bF = (frout.bF && bForce);
                         frout.natoms = nout;
                         if (bNeedPrec && (bSetPrec || !fr.bPrec)) {
                             frout.bPrec = TRUE;
@@ -1562,7 +1564,7 @@ int gmx_trjconv(int argc,char *argv[])
             ffclose(out);
         if (bSubTraj) {
             for(i=0; (i<clust->clust->nr); i++)
-                if (clust_status[i] )
+                if (clust_status_id[i] >= 0 )
                     close_trx(clust_status[i]);
         }
     }
