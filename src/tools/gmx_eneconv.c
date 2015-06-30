@@ -527,7 +527,7 @@ int gmx_eneconv(int argc,char *argv[])
     { "-dt",       FALSE, etREAL, {&delta_t},
       "Only write out frame when t MOD dt = offset" },
     { "-offset",   FALSE, etREAL, {&toffset},
-      "Time offset for -dt option" }, 
+      "Time offset for [TT]-dt[tt] option" }, 
     { "-settime",  FALSE, etBOOL, {&bSetTime}, 
       "Change starting time interactively" },
     { "-sort",     FALSE, etBOOL, {&bSort},
@@ -770,7 +770,8 @@ int gmx_eneconv(int argc,char *argv[])
 	noutfr++;
       }
     }
-
+    if (f == nfile)
+      f--;
     printf("\nLast step written from %s: t %g, step %s\n",
 	   fnms[f],last_t,gmx_step_str(laststep,buf));
     lastfilestep = laststep;

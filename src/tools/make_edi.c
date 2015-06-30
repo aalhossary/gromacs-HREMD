@@ -68,7 +68,7 @@
 typedef struct
 { 
     real        deltaF0;
-    gmx_bool        bHarmonic;
+    gmx_bool    bHarmonic;
     real        tau;
     real        deltaF;
     real        kT; 
@@ -91,8 +91,8 @@ typedef struct edix
 typedef struct edipar
 {
     int         nini;           /* total Nr of atoms                    */
-    gmx_bool        fitmas;         /* true if trans fit with cm            */
-    gmx_bool        pcamas;         /* true if mass-weighted PCA            */
+    gmx_bool    fitmas;         /* true if trans fit with cm            */
+    gmx_bool    pcamas;         /* true if mass-weighted PCA            */
     int         presteps;       /* number of steps to run without any   
                                  *    perturbations ... just monitoring */
     int         outfrq;         /* freq (in steps) of writing to edo    */
@@ -339,7 +339,6 @@ int read_conffile(const char *confin,char *title,rvec *x[])
   else {*/
     /* make space for coordinates and velocities */
     init_t_atoms(&confat,natoms,FALSE);
-    printf("init_t\n");
     snew(*x,natoms);
     read_stx_conf(confin,title,&confat,*x,NULL,NULL,box);
     return natoms;
@@ -460,7 +459,7 @@ int main(int argc,char *argv[])
 {
 
   static const char *desc[] = {
-      "[TT]make_edi[tt] generates an essential dynamics (ED) sampling input file to be used with mdrun",
+      "[TT]make_edi[tt] generates an essential dynamics (ED) sampling input file to be used with [TT]mdrun[tt]",
       "based on eigenvectors of a covariance matrix ([TT]g_covar[tt]) or from a", 
       "normal modes anaysis ([TT]g_nmeig[tt]).",
       "ED sampling can be used to manipulate the position along collective coordinates",
@@ -510,7 +509,7 @@ int main(int argc,char *argv[])
       "is not very parallel-friendly from an implentation point of view. Because",
       "parallel ED requires much extra communication, expect the performance to be",
       "lower as in a free MD simulation, especially on a large number of nodes. [PAR]",
-      "All output of mdrun (specify with -eo) is written to a .edo file. In the output",
+      "All output of [TT]mdrun[tt] (specify with [TT]-eo[tt]) is written to a .edo file. In the output",
       "file, per OUTFRQ step the following information is present: [PAR]",
       "* the step number[BR]",
       "* the number of the ED dataset. (Note that you can impose multiple ED constraints in",
@@ -584,7 +583,7 @@ int main(int argc,char *argv[])
     { "-radcon", FALSE, etSTR, {&evSelections[5]},
         "Indices of eigenvectors for acceptance radius contraction" },
     { "-outfrq", FALSE, etINT, {&edi_params.outfrq},
-        "Freqency (in steps) of writing output in .edo file" },
+        "Freqency (in steps) of writing output in [TT].edo[tt] file" },
     { "-slope", FALSE, etREAL, { &edi_params.slope},
         "Minimal slope in acceptance radius expansion"},
     { "-maxedsteps", FALSE, etINT, {&edi_params.maxedsteps},
@@ -598,7 +597,7 @@ int main(int argc,char *argv[])
     { "-eqsteps", FALSE, etINT, {&eqSteps},
         "Number of steps to run without any perturbations "},
     { "-Eflnull", FALSE, etREAL, {&constEfl},
-        "This is the starting value of the flooding strength. The flooding strength is updated according to the adaptive flooding scheme. To use a constant flooding strength use -tau 0. "},
+        "This is the starting value of the flooding strength. The flooding strength is updated according to the adaptive flooding scheme. To use a constant flooding strength use [TT]-tau[tt] 0. "},
     { "-T", FALSE, etREAL, {&T},
         "T is temperature, the value is needed if you want to do flooding "},
     { "-alpha",FALSE,etREAL,{&alpha},
@@ -699,7 +698,7 @@ int main(int argc,char *argv[])
     
     /* print the interpreted list of eigenvectors - to give some feedback*/
     for (ev_class=0; ev_class<evEND; ++ev_class) {
-        printf("list %s consist of the indices:",evOptions[ev_class]);
+        printf("Eigenvector list %7s consists of the indices: ",evOptions[ev_class]);
         i=0;
         while(listen[ev_class][i])
             printf("%d ",listen[ev_class][i++]);
@@ -786,22 +785,35 @@ int main(int argc,char *argv[])
   make_t_edx(&edi_params.sav,natoms,xav1,index);
 
                                                          
-  /*store target positions in edi_params*/
-  if (opt2bSet("-tar",NFILE,fnm)) {
-    get_structure(atoms,indexfile,TargetFile,&edi_params.star,nfit,
-                   ifit,natoms,index);
- } else
+  /* Store target positions in edi_params */
+  if (opt2bSet("-tar",NFILE,fnm))
+  {
+      if (0 != listen[evFLOOD][0])
+      {
+          fprintf(stderr, "\nNote: Providing a TARGET structure has no effect when using flooding.\n"
+                          "      You may want to use -ori to define the flooding potential center.\n\n");
+      }
+      get_structure(atoms,indexfile,TargetFile,&edi_params.star,nfit,ifit,natoms,index);
+  }
+  else
+  {
       make_t_edx(&edi_params.star,0,NULL,index);
-     /*store origin positions*/
- if (opt2bSet("-ori",NFILE,fnm)) {
-     get_structure(atoms,indexfile,OriginFile,&edi_params.sori,nfit,
-                   ifit,natoms,index);
- } else
+  }
+
+  /* Store origin positions */
+  if (opt2bSet("-ori",NFILE,fnm))
+  {
+      get_structure(atoms,indexfile,OriginFile,&edi_params.sori,nfit,ifit,natoms,index);
+  }
+  else
+  {
       make_t_edx(&edi_params.sori,0,NULL,index);
-  
-  /*write edi-file*/
+  }
+
+  /* Write edi-file */
   write_the_whole_thing(ffopen(EdiFile,"w"), &edi_params, eigvec1,nvec1, listen, evStepList);
   thanx(stderr);
+
   return 0;
 }
 

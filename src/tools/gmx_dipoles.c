@@ -683,7 +683,7 @@ static void do_dip(t_topology *top,int ePBC,real volume,
     real       rcut=0,t,t0,t1,dt,lambda,dd,rms_cos;
     rvec       dipaxis;
     matrix     box;
-    gmx_bool       bCorr,bTotal,bCont;
+    gmx_bool   bCorr,bTotal,bCont;
     double     M_diff=0,epsilon,invtel,vol_aver;
     double     mu_ave,mu_mol,M2_ave=0,M_ave2=0,M_av[DIM],M_av2[DIM];
     double     M[3],M2[3],M4[3],Gk=0,g_k=0;
@@ -726,7 +726,7 @@ static void do_dip(t_topology *top,int ePBC,real volume,
         mols = &(top->mols);
     }
   
-    if (iVol == -1)
+    if ((iVol == -1) && bMU)
         printf("Using Volume from topology: %g nm^3\n",volume);
 
     /* Correlation stuff */ 
@@ -890,6 +890,10 @@ static void do_dip(t_topology *top,int ePBC,real volume,
 
         muframelsq = gmx_stats_init();
     
+        /* Initialise */
+        for(m=0; (m<DIM); m++) 
+            M_av2[m] = 0;
+            
         if (bMU) 
         {
             /* Copy rvec into double precision local variable */
@@ -900,10 +904,8 @@ static void do_dip(t_topology *top,int ePBC,real volume,
         {
             /* Initialise */
             for(m=0; (m<DIM); m++) 
-            {
                 M_av[m] = 0;
-                M_av2[m] = 0;
-            }
+                
             gmx_rmpbc(gpbc,natom,box,x);
       
             /* Begin loop of all molecules in frame */
@@ -1123,7 +1125,8 @@ static void do_dip(t_topology *top,int ePBC,real volume,
             bCont = read_mu_from_enx(fmu,iVol,iMu,mu_t,&volume,&t,nre,fr); 
         else
             bCont = read_next_x(oenv,status,&t,natom,x,box);
-    } while (bCont);
+        timecheck=check_times(t);
+    } while (bCont && (timecheck == 0) );
   
     gmx_rmpbc_done(gpbc);
 
@@ -1263,20 +1266,20 @@ void dipole_atom2molindex(int *n,int *index,t_block *mols)
 int gmx_dipoles(int argc,char *argv[])
 {
     const char *desc[] = {
-        "g_dipoles computes the total dipole plus fluctuations of a simulation",
+        "[TT]g_dipoles[tt] computes the total dipole plus fluctuations of a simulation",
         "system. From this you can compute e.g. the dielectric constant for",
         "low dielectric media.",
         "For molecules with a net charge, the net charge is subtracted at",
         "center of mass of the molecule.[PAR]",
-        "The file Mtot.xvg contains the total dipole moment of a frame, the",
+        "The file [TT]Mtot.xvg[tt] contains the total dipole moment of a frame, the",
         "components as well as the norm of the vector.",
-        "The file aver.xvg contains < |Mu|^2 > and |< Mu >|^2 during the",
+        "The file [TT]aver.xvg[tt] contains < |Mu|^2 > and |< Mu >|^2 during the",
         "simulation.",
-        "The file dipdist.xvg contains the distribution of dipole moments during",
+        "The file [TT]dipdist.xvg[tt] contains the distribution of dipole moments during",
         "the simulation",
         "The mu_max is used as the highest value in the distribution graph.[PAR]",
         "Furthermore the dipole autocorrelation function will be computed when",
-        "option -corr is used. The output file name is given with the [TT]-c[tt]",
+        "option [TT]-corr[tt] is used. The output file name is given with the [TT]-c[tt]",
         "option.",
         "The correlation functions can be averaged over all molecules",
         "([TT]mol[tt]), plotted per molecule separately ([TT]molsep[tt])",
@@ -1290,7 +1293,7 @@ int gmx_dipoles(int argc,char *argv[])
         "the dipoles divided by the distance to the third power.[PAR]",
         "[PAR]",
         "EXAMPLES[PAR]",
-        "g_dipoles -corr mol -P1 -o dip_sqr -mu 2.273 -mumax 5.0 -nofft[PAR]",
+        "[TT]g_dipoles -corr mol -P1 -o dip_sqr -mu 2.273 -mumax 5.0 -nofft[tt][PAR]",
         "This will calculate the autocorrelation function of the molecular",
         "dipoles using a first order Legendre polynomial of the angle of the",
         "dipole vector and itself a time t later. For this calculation 1001",
@@ -1324,7 +1327,7 @@ int gmx_dipoles(int argc,char *argv[])
         { "-pairs",    FALSE, etBOOL, {&bPairs},
           "Calculate |cos theta| between all pairs of molecules. May be slow" },
         { "-ncos",     FALSE, etINT, {&ncos},
-          "Must be 1 or 2. Determines whether the <cos> is computed between all mole cules in one group, or between molecules in two different groups. This turns on the -gkr flag." }, 
+          "Must be 1 or 2. Determines whether the <cos> is computed between all molecules in one group, or between molecules in two different groups. This turns on the [TT]-gkr[tt] flag." }, 
         { "-axis",     FALSE, etSTR, {&axtitle}, 
           "Take the normal on the computational box in direction X, Y or Z." },
         { "-sl",       FALSE, etINT, {&nslices},
@@ -1336,7 +1339,7 @@ int gmx_dipoles(int argc,char *argv[])
         { "-rcmax",    FALSE, etREAL, {&rcmax},
           "Maximum distance to use in the dipole orientation distribution (with ncos == 2). If zero, a criterium based on the box length will be used." },
         { "-phi",      FALSE, etBOOL, {&bPhi},
-          "Plot the 'torsion angle' defined as the rotation of the two dipole vectors around the distance vector between the two molecules in the xpm file from the -cmap option. By default the cosine of the angle between the dipoles is plotted." },
+          "Plot the 'torsion angle' defined as the rotation of the two dipole vectors around the distance vector between the two molecules in the [TT].xpm[tt] file from the [TT]-cmap[tt] option. By default the cosine of the angle between the dipoles is plotted." },
         { "-nlevels",  FALSE, etINT, {&nlevels},
           "Number of colors in the cmap output" },
         { "-ndegrees", FALSE, etINT, {&ndegrees},
@@ -1346,7 +1349,7 @@ int gmx_dipoles(int argc,char *argv[])
     int          nFF[2];
     atom_id      **grpindex;
     char         **grpname=NULL;
-    gmx_bool         bCorr,bQuad,bGkr,bMU,bSlab;  
+    gmx_bool     bCorr,bQuad,bGkr,bMU,bSlab;  
     t_filenm fnm[] = {
         { efEDR, "-en", NULL,         ffOPTRD },
         { efTRX, "-f", NULL,           ffREAD },
@@ -1385,6 +1388,8 @@ int gmx_dipoles(int argc,char *argv[])
         printf("WARNING: EpsilonRF = 0.0, this really means EpsilonRF = infinity\n");
 
     bMU   = opt2bSet("-en",NFILE,fnm);
+    if (bMU)
+        gmx_fatal(FARGS,"Due to new ways of treating molecules in GROMACS the total dipole in the energy file may be incorrect, because molecules can be split over periodic boundary conditions before computing the dipole. Please use your trajectory file.");
     bQuad = opt2bSet("-q",NFILE,fnm);
     bGkr  = opt2bSet("-g",NFILE,fnm);
     if (opt2parg_bSet("-ncos",asize(pa),pa)) {

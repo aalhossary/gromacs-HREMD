@@ -69,20 +69,33 @@ const t_sandr_const sandrTeX[] = {
   { "[IT]", "{\\em " },
   { "[it]", "}"      },
   { "[PAR]","\n\n"   },
+  /* Escaping underscore for LaTeX is no longer necessary, and it breaks
+   * text searching and the index if you do. */
+  /*
   { "_",    "\\_"    },
+  */
   { "$",    "\\$"    },
-  { "<",    "$<$"    },
-  { ">",    "$>$"    },
-  { "^",    "\\^"    },
-  { "\\^2",   "$^2$" },
-  { "\\^3",   "$^3$" },
-  { "\\^6",   "$^6$" },
+  { "<=",   "\\ensuremath{\\leq{}}"},
+  { ">=",   "\\ensuremath{\\geq{}}"},
+  { "<",    "\\textless{}" },
+  { ">",    "\\textgreater{}" },
+  { "^",    "\\^{}"    },
+  { "\\^{}t", "\\ensuremath{^t}" },
+  { "\\^{}a", "\\ensuremath{^a}" },
+  { "\\^{}b", "\\ensuremath{^b}" },
+  { "\\^{}2", "\\ensuremath{^2}" },
+  { "\\^{}3", "\\ensuremath{^3}" },
+  { "\\^{}6", "\\ensuremath{^6}" },
   { "#",    "\\#"    },
   { "[BR]", "\\\\"   },
   { "%",    "\\%"    },
   { "&",    "\\&"    },
-  { "||",    "or"    },
-  { "|",     "or"    }
+  /* The next two lines used to substitute "|" and "||" to "or", but only
+   * g_angle used that functionality, so that was changed to a textual
+   * "or" there, so that other places could use those symbols to indicate
+   * magnitudes. */
+  { "||",    "\\textbar{}\\textbar"    },
+  { "|",     "\\textbar{}"    }
 };
 #define NSRTEX asize(sandrTeX)
 
@@ -239,7 +252,7 @@ static char *repall(const char *s,int nsr,const t_sandr_const sa[])
   /* Copy input to a non-constant char buffer.
    * buf1 is allocated here 
    */
-  buf1=strdup(s); 
+  buf1=gmx_strdup(s); 
   
   for(i=0; (i<nsr); i++) {
     /* Replace in buffer1, put result in buffer2.
@@ -261,7 +274,7 @@ static char *repallww(const char *s,int nsr,const t_sandr sa[])
   /* Copy input to a non-constant char buffer.
    * buf1 is allocated here 
    */
-  buf1=strdup(s); 
+  buf1=gmx_strdup(s); 
   
   for(i=0; (i<nsr); i++) {
     /* Replace in buffer1, put result in buffer2.
@@ -285,12 +298,12 @@ static char *html_xref(char *s,const char *program, t_linkdata *links,gmx_bool b
     snew(links->sr,n);
     for(i=0,j=0; (i<n); i++) {
       if (!program || (gmx_strcasecmp(program,filestr[i])  != 0)) {
-	links->sr[j].search=strdup(filestr[i]);
+	links->sr[j].search=gmx_strdup(filestr[i]);
 	if (bWiki)
 	  sprintf(buf,"[[%s]]",filestr[i]);
 	else
 	  sprintf(buf,"<a href=\"%s.html\">%s</a>",filestr[i],filestr[i]);
-	links->sr[j].replace=strdup(buf);
+	links->sr[j].replace=gmx_strdup(buf);
 	j++;
       }
     }
@@ -376,7 +389,7 @@ static void write_texman(FILE *out,const char *program,
   int i;
   char tmp[256];
   
-  fprintf(out,"\\section{\\normindex{%s}}\n\n",check_tex(program));
+  fprintf(out,"\\section{\\normindex{%s}}\\label{%s}\n\n",check_tex(program),check_tex(program));
   
   if (nldesc > 0)
     for(i=0; (i<nldesc); i++) 
