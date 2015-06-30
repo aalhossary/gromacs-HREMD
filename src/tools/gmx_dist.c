@@ -71,13 +71,13 @@ int gmx_dist(int argc,char *argv[])
   const char *desc[] = {
     "[TT]g_dist[tt] can calculate the distance between the centers of mass of two",
     "groups of atoms as a function of time. The total distance and its",
-    "x, y and z components are plotted.[PAR]",
+    "[IT]x[it]-, [IT]y[it]-, and [IT]z[it]-components are plotted.[PAR]",
     "Or when [TT]-dist[tt] is set, print all the atoms in group 2 that are",
     "closer than a certain distance to the center of mass of group 1.[PAR]",
     "With options [TT]-lt[tt] and [TT]-dist[tt] the number of contacts",
     "of all atoms in group 2 that are closer than a certain distance",
     "to the center of mass of group 1 are plotted as a function of the time",
-    "that the contact was continously present.[PAR]",
+    "that the contact was continuously present.[PAR]",
     "Other programs that calculate distances are [TT]g_mindist[tt]",
     "and [TT]g_bond[tt]."
   };

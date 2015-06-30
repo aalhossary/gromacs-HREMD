@@ -6078,11 +6078,11 @@ static int check_dlb_support(FILE *fplog,t_commrec *cr,
 			case edlbNO: 
 				break;
 			case edlbAUTO:
-				dd_warning(cr,fplog,"NOTE: reproducability requested, will not use dynamic load balancing\n");
+				dd_warning(cr,fplog,"NOTE: reproducibility requested, will not use dynamic load balancing\n");
 				eDLB = edlbNO;
 				break;
 			case edlbYES:
-				dd_warning(cr,fplog,"WARNING: reproducability requested with dynamic load balancing, the simulation will NOT be binary reproducable\n");
+				dd_warning(cr,fplog,"WARNING: reproducibility requested with dynamic load balancing, the simulation will NOT be binary reproducible\n");
 				break;
 			default:
 				gmx_fatal(FARGS,"Death horror: undefined case (%d) for load balancing choice",eDLB);
@@ -6459,7 +6459,7 @@ gmx_domdec_t *init_domain_decomposition(FILE *fplog,t_commrec *cr,
     if (cr->npmenodes > dd->nnodes)
     {
         gmx_fatal_collective(FARGS,cr,NULL,
-                             "The number of separate PME node (%d) is larger than the number of PP nodes (%d), this is not supported.",cr->npmenodes,dd->nnodes);
+                             "The number of separate PME nodes (%d) is larger than the number of PP nodes (%d), this is not supported.",cr->npmenodes,dd->nnodes);
     }
     if (cr->npmenodes > 0)
     {
