@@ -242,6 +242,17 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
     int chkpt_ret;
 #endif
 
+    //////////////////// TINKER interface - leafyoung //////////////////////////////
+    const int LENGTH = 132;
+    char tempfn[200], fnscript[200], buffer[LENGTH+1];
+    char *s=buffer;
+    FILE *fp1;
+    real gb_ener = 10.0;
+    real epot_backup = 0.0;
+    int nn;//counter for the filename string length
+    //////////////////// End of TINKER interface - leafyoung //////////////////////////////
+
+
     /* Check for special mdrun options */
     bRerunMD = (Flags & MD_RERUN);
     bIonize  = (Flags & MD_IONIZE);
@@ -1570,10 +1581,7 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
                     /* Make molecules whole only for confout writing */
                     do_pbc_mtop(fplog, ir->ePBC, state->box, top_global, x_for_confout);
                 }
-                write_sto_conf_mtop(ftp2fn(efSTO, nfile, fnm),
-                                    *top_global->name, top_global,
-                                    x_for_confout, state_global->v,
-                                    ir->ePBC, state->box);
+                write_sto_conf_mtop(ftp2fn(efSTO, nfile, fnm), *top_global->name, top_global, x_for_confout, state_global->v, ir->ePBC, state->box); /*watch this line*/
                 if (fr->bMolPBC && state->x == state_global->x)
                 {
                     sfree(x_for_confout);
@@ -2114,21 +2122,69 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
 
         /* Replica exchange */
         bExchanged = FALSE;
-        if ((repl_ex_nst > 0) && (step > 0) && !bLastStep &&
-            do_per_step(step, repl_ex_nst))
-        {
-            bExchanged = replica_exchange(fplog, cr, repl_ex,
-                                          state_global, enerd,
-                                          state, step, t);
+	    //////////////// start of HREMD ///////////////////////////////
 
-            if (bExchanged && DOMAINDECOMP(cr))
-            {
-                dd_partition_system(fplog, step, cr, TRUE, 1,
-                                    state_global, top_global, ir,
-                                    state, &f, mdatoms, top, fr,
-                                    vsite, shellfc, constr,
-                                    nrnb, wcycle, FALSE);
-            }
+//  /*if ((repl_ex_nst > 0) && (step > 0) && !bLastStep && do_per_step(step, repl_ex_nst)){
+//    	bExchanged = replica_exchange(fplog, cr, repl_ex, state_global, enerd, state, step, t);*/
+
+        /*Exchange - leafyoung*/
+        if ((repl_ex_nst > 0) && (step > 0) && !bLastStep && do_per_step(step,repl_ex_nst)) { /*watch this line*/
+
+        	/*write conf - leafyoung */
+        	if ( MASTER(cr) ) {
+
+        		nn=strlen(ftp2fn(efLOG,nfile,fnm))-4;
+        		for (i=0;i<nn;i++) {
+        			tempfn[i]=ftp2fn(efLOG,nfile,fnm)[i];
+        		}
+        		tempfn[i]='\0';
+        		sprintf(tempfn, "%s_"gmx_large_int_pfmt".pdb", tempfn, step); /*notice that step is gmx_large_int_t (long long int) */
+
+        		write_sto_conf_mtop(tempfn, *top_global->name, top_global, state_global->x, state_global->v, ir->ePBC, state->box);/*Watch this line*/
+//        		//use next block only if the above line fails (not expected to do)
+//                if (fr->bMolPBC && state->x == state_global->x){
+//                    snew(x_for_confout, state_global->natoms);
+//                    copy_rvecn(state_global->x, x_for_confout, 0, state_global->natoms);
+//            		write_sto_conf_mtop(ftp2fn(efSTO, nfile, fnm),*top_global->name, top_global,x_for_confout,    state_global->v, ir->ePBC, state->box);
+//                    sfree(x_for_confout);
+//                } else {
+//                    /* With DD, or no bMolPBC, it doesn't matter if we change state_global->x */
+//            		write_sto_conf_mtop(tempfn, 				  *top_global->name, top_global, state_global->x, state_global->v, ir->ePBC, state->box);
+//                }
+
+        		/*Do Tinker - leafyoung*/
+        		sprintf(fnscript, "./do_tinker_eval.sh %s", tempfn);
+        		if (( fp1=popen(fnscript, "r")) == NULL)
+        			gmx_fatal(FARGS,"Error opening read pipe", 1);
+
+        		if (fgets(s, LENGTH, fp1) != NULL ) {
+        			gb_ener=atof(s);
+        		} else {
+        			gmx_fatal(FARGS,"Error reading gb_ener", 1);
+        		}
+        		pclose(fp1);
+
+        		fprintf(fplog,"Exchange PotE(sys,gb_ener): %g %g \n", enerd->term[F_EPOT], gb_ener);
+        		epot_backup=enerd->term[F_EPOT];
+        		enerd->term[F_EPOT]=gb_ener;
+
+        	}
+        	// /*the  original replica_exchange() call line (we shall change this behavior later */
+        	bExchanged = replica_exchange(fplog, cr, repl_ex, state_global, enerd, state, step, t); /*watch this line*/
+
+        	if (MASTER(cr)) {/*This check was made by Amr to prevent a potential bug*/
+        		enerd->term[F_EPOT]=epot_backup;
+        	}
+        	//////////////end of HREMD /////////////////////////////////
+
+        	if (bExchanged && DOMAINDECOMP(cr))
+        	{
+        		dd_partition_system(fplog, step, cr, TRUE, 1,
+        				state_global, top_global, ir,
+						state, &f, mdatoms, top, fr,
+						vsite, shellfc, constr,
+						nrnb, wcycle, FALSE);
+        	}
         }
 
         bFirstStep       = FALSE;
@@ -2303,7 +2359,7 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
 
     if (repl_ex_nst > 0 && MASTER(cr))
     {
-        print_replica_exchange_statistics(fplog, repl_ex);
+        print_replica_exchange_statistics(fplog, repl_ex);/*watch this line for future*/
     }
 
     runtime->nsteps_done = step_rel;

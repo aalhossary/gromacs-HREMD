@@ -1300,9 +1300,9 @@ prepare_to_do_exchange(FILE      *fplog,
     }
 }
 
-gmx_bool replica_exchange(FILE *fplog, const t_commrec *cr, struct gmx_repl_ex *re,
-                          t_state *state, gmx_enerdata_t *enerd,
-                          t_state *state_local, gmx_large_int_t step, real time)
+gmx_bool replica_exchange(FILE *fplog, const t_commrec *cr, struct gmx_repl_ex *re,/*watch this line*/
+                          t_state *state, gmx_enerdata_t *enerd,/*watch this line*/
+                          t_state *state_local, gmx_large_int_t step, real time)/*watch this line*/
 {
     int i, j;
     int replica_id = 0;
