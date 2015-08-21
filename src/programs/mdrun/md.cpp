@@ -112,6 +112,9 @@
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
 
+#include "gromacs/fileio/confio.h"
+
+
 #include "deform.h"
 #include "membed.h"
 #include "repl_ex.h"
@@ -240,6 +243,16 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
     /* Temporary addition for FAHCORE checkpointing */
     int chkpt_ret;
 #endif
+
+    //////////////////// TINKER interface - leafyoung //////////////////////////////
+    const int LENGTH = 132;
+    char tempfn[200], fnscript[200], buffer[LENGTH+1];
+    char *s=buffer;
+    FILE *fp1;
+    real gb_ener = 10.0;
+    real epot_backup = 0.0;
+    int nn;//counter for the filename string length
+    //////////////////// End of TINKER interface - leafyoung //////////////////////////////
 
     /* Check for special mdrun options */
     bRerunMD = (Flags & MD_RERUN);
@@ -1682,9 +1695,42 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         bExchanged = FALSE;
         if (bDoReplEx)
         {
-            bExchanged = replica_exchange(fplog, cr, repl_ex,
-                                          state_global, enerd,
-                                          state, step, t);
+
+        	if ( MASTER(cr) ) {
+
+        		nn=strlen(ftp2fn(efLOG,nfile,fnm))-4;
+        		for (i=0;i<nn;i++) {
+        			tempfn[i]=ftp2fn(efLOG,nfile,fnm)[i];
+        		}
+        		tempfn[i]='\0';
+        		sprintf(tempfn, "%s_%" GMX_PRId64 ".pdb", tempfn, step); /*notice the step type (long long int ?) */
+
+        		write_sto_conf_mtop(tempfn, *top_global->name, top_global, state_global->x, state_global->v, ir->ePBC, state->box);/*Watch this line*/
+
+        		/*Do Tinker - leafyoung*/
+        		sprintf(fnscript, "./do_tinker_eval_gmx.sh %s", tempfn);
+        		if (( fp1=popen(fnscript, "r")) == NULL)
+        			gmx_fatal(FARGS,"Error opening read pipe", 1);
+
+        		if (fgets(s, LENGTH, fp1) != NULL ) {
+        			gb_ener=atof(s);
+        		} else {
+        			gmx_fatal(FARGS,"Error reading gb_ener", 1);
+        		}
+        		pclose(fp1);
+
+        		fprintf(fplog,"Exchange PotE(sys,gb_ener): %g %g \n", enerd->term[F_EPOT], gb_ener);
+        		epot_backup=enerd->term[F_EPOT];
+        		enerd->term[F_EPOT]=gb_ener;
+
+        	}
+
+        	bExchanged = replica_exchange(fplog, cr, repl_ex, state_global, enerd, state, step, t);
+
+        	if (MASTER(cr)) {/*This check was made by Amr to prevent a potential bug*/
+        		enerd->term[F_EPOT]=epot_backup;
+        	}
+
         }
 
         if ( (bExchanged || bNeedRepartition) && DOMAINDECOMP(cr) )
