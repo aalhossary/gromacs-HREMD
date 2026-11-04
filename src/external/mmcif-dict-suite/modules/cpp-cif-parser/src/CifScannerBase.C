@@ -21,12 +21,16 @@
 #include "CifScannerBase.h"
 #include "CifScannerInt.h"
 #include "CifParserBase.h"
+
+extern "C"
+{
 #include "CifParser.h"
 
 extern int cifparser_leng;
 extern char* cifparser_text;
 extern YYSTYPE cifparser_lval;
 extern FILE* cifparser_in;
+}
 
 #define yyleng cifparser_leng
 #define yytext cifparser_text

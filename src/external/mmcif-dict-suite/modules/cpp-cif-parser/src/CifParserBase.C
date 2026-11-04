@@ -30,10 +30,9 @@
 
 typedef struct cifparser__buffer_state* CIFPARSER__BUFFER_STATE;
 
-extern FILE* cifparser_in;
-
 extern "C"
 {
+    extern FILE* cifparser_in;
     int cifparser_parse();
     void cifparser_restart(FILE*);
     CIFPARSER__BUFFER_STATE cifparser__scan_string(const char*);

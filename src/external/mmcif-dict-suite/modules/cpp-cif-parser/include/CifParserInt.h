@@ -30,11 +30,11 @@ void ProcessUnknownValueFromParser();
 void ProcessMissingValueFromParser();
 void ProcessDataBlockNameFromParser();
 void cifparser_error(const char*);
-#ifdef __cplusplus
-}
-#endif
 extern char* Glob_tBufKeyword;
 extern char* Glob_pBufValue;
 extern char* Glob_dataBlockName;
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CIF_PARSER_BASE_H */

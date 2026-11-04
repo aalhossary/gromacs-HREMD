@@ -5,9 +5,26 @@
 
 
 #include <string.h>
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 #include <fcntl.h>
 #include <sys/stat.h>
+
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
+#ifdef _WIN32
+#ifndef S_IRUSR
+#define S_IRUSR _S_IREAD
+#endif
+#ifndef S_IWUSR
+#define S_IWUSR _S_IWRITE
+#endif
+#endif
 
 #include <iostream>
 #include <iomanip>
@@ -1446,7 +1463,7 @@ void Serializer::OpenFileIO(const string& fileName, const eFileMode fileMode)
             break;
     }
 
-    if ((_fd = open(fileName.c_str(), openMode, S_IRUSR|S_IWUSR)) < 0)
+    if ((_fd = open(fileName.c_str(), openMode | O_BINARY, S_IRUSR|S_IWUSR)) < 0)
     {
         throw FileException("Could not open file: " + fileName,
           "BlockIO::OpenFile");

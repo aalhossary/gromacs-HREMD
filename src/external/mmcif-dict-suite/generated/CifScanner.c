@@ -1483,6 +1483,12 @@ char *cifparser_text;
   PURPOSE:    DDL 2.1 compliant CIF file lexer ...
 */
 
+/* Windows has no <unistd.h>; <io.h> declares isatty(), which the scanner uses. */
+#ifdef _WIN32
+#include <io.h>
+#define YY_NO_UNISTD_H
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

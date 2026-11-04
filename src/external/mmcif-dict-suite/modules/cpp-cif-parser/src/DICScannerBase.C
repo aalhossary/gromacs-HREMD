@@ -22,12 +22,16 @@
 #include "DICScannerBase.h"
 #include "DICScannerInt.h"
 #include "DICParserBase.h"
+
+extern "C"
+{
 #include "DICParser.h"
 
 extern int dicparser_leng;
 extern char* dicparser_text;
 extern YYSTYPE dicparser_lval;
 extern FILE* dicparser_in;
+}
 
 #define yyleng dicparser_leng
 #define yytext dicparser_text

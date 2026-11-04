@@ -29,10 +29,9 @@
 #include "DICParserInt.h"
 #include "DICParserBase.h"
 
-extern FILE* dicparser_in;
-
 extern "C"
 {
+  extern FILE* dicparser_in;
   int dicparser_parse();
   void dicparser_restart(FILE*);
 }
